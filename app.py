@@ -29,11 +29,15 @@ SESSION_TYPES = {
     "Practice 1": "FP1",
     "Practice 2": "FP2",
     "Practice 3": "FP3",
-    "Sprint Shootout / Sprint Quali": "SQ",
+    "Sprint Shootout": "SQ",
+    "Sprint Qualifying": "SQ",
     "Sprint": "S",
     "Qualifying": "Q",
     "Race": "R",
 }
+
+SESSION_DATE_COLUMNS = ["Session1Date", "Session2Date", "Session3Date", "Session4Date", "Session5Date"]
+SESSION_NAME_COLUMNS = ["Session1", "Session2", "Session3", "Session4", "Session5"]
 
 CHANNELS = ["Speed", "Throttle", "Brake", "nGear", "RPM", "DRS", "Accel_ms2"]
 DEFAULT_CHANNELS = ["Speed", "Throttle", "Brake", "nGear"]
@@ -63,6 +67,62 @@ def get_schedule(year: int) -> pd.DataFrame:
     return schedule.dropna(subset=["EventName"]).reset_index(drop=True)
 
 
+def _to_timestamp_utc(value) -> Optional[pd.Timestamp]:
+    if pd.isna(value):
+        return None
+    ts = pd.Timestamp(value)
+    if ts.tzinfo is None:
+        ts = ts.tz_localize("UTC")
+    else:
+        ts = ts.tz_convert("UTC")
+    return ts
+
+
+def event_has_available_data(row: pd.Series, now_utc: Optional[pd.Timestamp] = None) -> bool:
+    """Return True if at least one session should have public timing data available."""
+    now_utc = now_utc or pd.Timestamp.now(tz="UTC")
+    for col in SESSION_DATE_COLUMNS:
+        if col not in row.index:
+            continue
+        ts = _to_timestamp_utc(row.get(col))
+        # Add a small grace period: sessions are often available shortly after running.
+        if ts is not None and ts <= now_utc + pd.Timedelta(hours=2):
+            return True
+    return False
+
+
+def available_events(schedule: pd.DataFrame) -> List[str]:
+    now_utc = pd.Timestamp.now(tz="UTC")
+    rows = schedule[schedule.apply(lambda r: event_has_available_data(r, now_utc), axis=1)].copy()
+    return rows["EventName"].dropna().tolist()
+
+
+def available_sessions_for_event(schedule: pd.DataFrame, event_name: str) -> List[str]:
+    """Return available FastF1 session display names for the selected event only."""
+    match = schedule[schedule["EventName"] == event_name]
+    if match.empty:
+        return []
+    row = match.iloc[0]
+    now_utc = pd.Timestamp.now(tz="UTC")
+    sessions: List[str] = []
+    for name_col, date_col in zip(SESSION_NAME_COLUMNS, SESSION_DATE_COLUMNS):
+        if name_col not in row.index or date_col not in row.index:
+            continue
+        session_name = row.get(name_col)
+        session_date = _to_timestamp_utc(row.get(date_col))
+        if pd.isna(session_name) or session_date is None:
+            continue
+        if session_date <= now_utc + pd.Timedelta(hours=2):
+            label = str(session_name)
+            if label in SESSION_TYPES and label not in sessions:
+                sessions.append(label)
+    return sessions
+
+
+def session_code_from_label(label: str) -> str:
+    return SESSION_TYPES.get(label, label)
+
+
 @st.cache_resource(show_spinner=False)
 def load_session(year: int, event_name: str, session_code: str):
     session = fastf1.get_session(year, event_name, session_code)
@@ -87,6 +147,28 @@ def fmt_laptime(td) -> str:
 
 def td_to_seconds(series: pd.Series) -> pd.Series:
     return pd.to_timedelta(series).dt.total_seconds()
+
+
+def format_lap_table(laps: pd.DataFrame) -> pd.DataFrame:
+    """Make Streamlit tables show exact sector/lap times instead of fuzzy timedelta text."""
+    out = laps.copy()
+    for col in ["LapTime", "Sector1Time", "Sector2Time", "Sector3Time", "PitInTime", "PitOutTime"]:
+        if col in out.columns:
+            out[col] = out[col].apply(fmt_laptime)
+    if "LapTimeSeconds" not in out.columns and "LapTime" in laps.columns:
+        out["LapTimeSeconds"] = laps["LapTime"].dt.total_seconds()
+    for col in ["LapTimeSeconds"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce").round(3)
+    return out
+
+
+def add_sector_seconds(laps: pd.DataFrame) -> pd.DataFrame:
+    out = laps.copy()
+    for col in ["Sector1Time", "Sector2Time", "Sector3Time"]:
+        if col in out.columns:
+            out[col.replace("Time", "Seconds")] = out[col].dt.total_seconds().round(3)
+    return out
 
 
 def get_driver_laps(session, drv: str) -> pd.DataFrame:
@@ -442,10 +524,21 @@ with st.sidebar:
         st.error(f"Could not load schedule: {e}")
         st.stop()
 
-    events = schedule["EventName"].tolist()
+    events = available_events(schedule)
+    if not events:
+        st.warning("No completed sessions with public FastF1 data are available for this year yet.")
+        st.stop()
+
     event_name = st.selectbox("Grand Prix", events, index=max(0, len(events) - 1))
-    session_label = st.selectbox("Session", list(SESSION_TYPES.keys()), index=list(SESSION_TYPES.keys()).index("Qualifying"))
-    session_code = SESSION_TYPES[session_label]
+    available_session_labels = available_sessions_for_event(schedule, event_name)
+    if not available_session_labels:
+        st.warning("No available sessions found for this Grand Prix yet.")
+        st.stop()
+
+    default_session = "Race" if "Race" in available_session_labels else available_session_labels[-1]
+    session_label = st.selectbox("Session", available_session_labels, index=available_session_labels.index(default_session))
+    session_code = session_code_from_label(session_label)
+    st.caption(f"Showing only sessions whose scheduled start time has passed. Available here: {', '.join(available_session_labels)}")
     load_btn = st.button("Load session", type="primary")
 
 if "loaded_key" not in st.session_state:
@@ -547,7 +640,8 @@ with tabs[0]:
     all_laps = session.laps.copy()
     all_laps = all_laps[all_laps["LapTime"].notna()].copy()
     all_laps = all_laps[all_laps["Driver"].isin(selected_laps.keys())]
-    all_laps["LapTimeSeconds"] = all_laps["LapTime"].dt.total_seconds()
+    all_laps = add_sector_seconds(all_laps)
+    all_laps["LapTimeSeconds"] = all_laps["LapTime"].dt.total_seconds().round(3)
     fig = go.Figure()
     for drv in selected_laps.keys():
         d = all_laps[all_laps["Driver"] == drv]
@@ -556,9 +650,14 @@ with tabs[0]:
     st.plotly_chart(fig, use_container_width=True)
 
     st.markdown("### Full lap table")
-    table_cols = ["Driver", "LapNumber", "LapTimeSeconds", "Sector1Time", "Sector2Time", "Sector3Time", "Compound", "TyreLife", "Stint", "PitInTime", "PitOutTime", "IsAccurate"]
+    table_cols = [
+        "Driver", "LapNumber", "LapTime", "LapTimeSeconds",
+        "Sector1Time", "Sector1Seconds", "Sector2Time", "Sector2Seconds", "Sector3Time", "Sector3Seconds",
+        "Compound", "TyreLife", "Stint", "PitInTime", "PitOutTime", "IsAccurate"
+    ]
     show_cols = [c for c in table_cols if c in all_laps.columns]
-    st.dataframe(all_laps[show_cols].sort_values(["LapTimeSeconds", "Driver"]), use_container_width=True, hide_index=True)
+    full_table = format_lap_table(all_laps[show_cols]).sort_values(["LapTimeSeconds", "Driver"])
+    st.dataframe(full_table, use_container_width=True, hide_index=True)
 
 with tabs[1]:
     selected_channels = st.multiselect("Channels", [c for c in CHANNELS if any(c in t.columns for t in lap_tels.values())], default=[c for c in DEFAULT_CHANNELS if any(c in t.columns for t in lap_tels.values())])
