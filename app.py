@@ -735,6 +735,193 @@ def exit_segment_comparison(lap_tels: Dict[str, pd.DataFrame], ref_driver: str) 
     return pd.DataFrame(rows)
 
 
+
+
+def find_energy_channels(lap_tels: Dict[str, pd.DataFrame]) -> List[str]:
+    """Return any telemetry columns that look like ERS/energy channels.
+
+    Public FastF1 car telemetry normally does not include true MGU-K deployment,
+    harvesting or SOC channels. This hook keeps the tab future-proof if a loaded
+    dataset ever exposes such columns.
+    """
+    keys = ["ers", "energy", "soc", "deploy", "harvest", "mguk", "mguh", "battery", "charge"]
+    found = []
+    for tel in lap_tels.values():
+        for col in tel.columns:
+            c = str(col).lower()
+            if any(k in c for k in keys) and col not in found:
+                found.append(col)
+    return found
+
+
+def gear_ratio_proxy_table(lap_tels: Dict[str, pd.DataFrame], labels: Dict[str, str]) -> pd.DataFrame:
+    """Estimate relative gear ratios from RPM and speed.
+
+    Absolute gearbox ratios require tyre radius and final-drive details, which are
+    not present in public FastF1 data. RPM / vehicle speed is still useful to
+    compare gear spacing and identify shifts.
+    """
+    rows = []
+    for drv, tel in lap_tels.items():
+        if not {"RPM", "Speed_ms", "nGear"}.issubset(tel.columns):
+            continue
+        df = tel[["RPM", "Speed_ms", "nGear"]].dropna().copy()
+        df = df[(df["Speed_ms"] > 12.0) & (df["RPM"] > 1000) & (df["nGear"] >= 1)]
+        if df.empty:
+            continue
+        df["Gear"] = df["nGear"].round().astype(int)
+        df["RatioProxy_rpm_per_ms"] = df["RPM"] / df["Speed_ms"]
+        for gear, g in df.groupby("Gear"):
+            if len(g) < 8:
+                continue
+            rows.append({
+                "Driver": drv,
+                "Label": labels.get(drv, drv),
+                "Gear": int(gear),
+                "MedianRatioProxy_rpm_per_ms": float(g["RatioProxy_rpm_per_ms"].median()),
+                "P10": float(g["RatioProxy_rpm_per_ms"].quantile(0.10)),
+                "P90": float(g["RatioProxy_rpm_per_ms"].quantile(0.90)),
+                "Samples": int(len(g)),
+            })
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return out
+    # Normalise within each driver to 8th gear, or highest available gear.
+    norm_rows = []
+    for drv, g in out.groupby("Driver"):
+        highest = int(g["Gear"].max())
+        base_gear = 8 if 8 in set(g["Gear"]) else highest
+        base = float(g.loc[g["Gear"] == base_gear, "MedianRatioProxy_rpm_per_ms"].iloc[0])
+        gg = g.copy()
+        gg["RelativeToTopGear"] = gg["MedianRatioProxy_rpm_per_ms"] / base if base else np.nan
+        norm_rows.append(gg)
+    return pd.concat(norm_rows, ignore_index=True)
+
+
+def tractive_force_dataframe(lap_tels: Dict[str, pd.DataFrame], labels: Dict[str, str], mass_kg: float, cda: float, crr: float, rho: float = 1.20) -> pd.DataFrame:
+    """Create tractive-force estimates from speed and acceleration.
+
+    This is a longitudinal estimate: F = m*a + aero_drag + rolling_resistance.
+    It does not know fuel mass, wind, gradient, tyre radius, drivetrain losses,
+    brake pressure or ERS torque split. Good for comparative traces, not absolute PU validation.
+    """
+    rows = []
+    for drv, tel in lap_tels.items():
+        required = {"Distance", "Speed", "Speed_ms", "Accel_ms2"}
+        if not required.issubset(tel.columns):
+            continue
+        cols = ["Distance", "Speed", "Speed_ms", "Accel_ms2"]
+        for optional in ["Throttle", "Brake", "nGear", "RPM", "DRS"]:
+            if optional in tel.columns:
+                cols.append(optional)
+        df = tel[cols].dropna(subset=["Distance", "Speed_ms", "Accel_ms2"]).copy()
+        if df.empty:
+            continue
+        df = df[(df["Speed_ms"] > 5.0) & (df["Accel_ms2"].abs() < 8.0)]
+        if df.empty:
+            continue
+        drag = 0.5 * rho * cda * df["Speed_ms"] ** 2
+        rolling = mass_kg * 9.80665 * crr
+        df["InertialForce_N"] = mass_kg * df["Accel_ms2"]
+        df["AeroDrag_N"] = drag
+        df["RollingResistance_N"] = rolling
+        df["TractiveForce_N"] = df["InertialForce_N"] + df["AeroDrag_N"] + df["RollingResistance_N"]
+        df["Power_kW"] = df["TractiveForce_N"] * df["Speed_ms"] / 1000.0
+        df["Driver"] = drv
+        df["Label"] = labels.get(drv, drv)
+        rows.append(df)
+    return pd.concat(rows, ignore_index=True) if rows else pd.DataFrame()
+
+
+def acceleration_zone_summary(force_df: pd.DataFrame) -> pd.DataFrame:
+    if force_df.empty:
+        return pd.DataFrame()
+    df = force_df.copy()
+    if "Throttle" in df.columns:
+        df = df[df["Throttle"].fillna(0) >= 80]
+    if "Brake" in df.columns:
+        try:
+            df = df[~df["Brake"].astype(bool)]
+        except Exception:
+            pass
+    df = df[(df["Accel_ms2"] > 0.15) & (df["Speed"] > 80)]
+    if df.empty:
+        return pd.DataFrame()
+    rows = []
+    for drv, g in df.groupby("Driver"):
+        rows.append({
+            "Driver": drv,
+            "Samples": int(len(g)),
+            "MeanAccel_ms2": float(g["Accel_ms2"].mean()),
+            "PeakAccel_ms2": float(g["Accel_ms2"].max()),
+            "MeanTractiveForce_N": float(g["TractiveForce_N"].mean()),
+            "PeakTractiveForce_N": float(g["TractiveForce_N"].max()),
+            "MeanPower_kW": float(g["Power_kW"].mean()),
+            "PeakPower_kW": float(g["Power_kW"].max()),
+        })
+    return pd.DataFrame(rows)
+
+
+def plot_tractive_force(force_df: pd.DataFrame, styles: Dict[str, Dict[str, str]]) -> go.Figure:
+    fig = go.Figure()
+    if force_df.empty:
+        return update_fig_layout(fig, height=420, ytitle="Estimated tractive force [N]")
+    for drv, g in force_df.groupby("Driver"):
+        fig.add_trace(go.Scatter(
+            x=g["Speed"], y=g["TractiveForce_N"], mode="markers", name=drv,
+            marker=dict(size=5, opacity=0.62, color=styles.get(drv, {}).get("color", "#aaa")),
+            customdata=np.stack([g["Distance"].to_numpy()], axis=-1),
+            hovertemplate="%{fullData.name}<br>Speed=%{x:.1f} km/h<br>F=%{y:.0f} N<br>Distance=%{customdata[0]:.0f} m<extra></extra>",
+        ))
+    fig.update_layout(height=420, margin=dict(l=20, r=20, t=35, b=35), xaxis_title="Speed [km/h]", yaxis_title="Estimated tractive force [N]", legend=dict(orientation="h", y=1.05))
+    return fig
+
+
+def plot_power_speed(force_df: pd.DataFrame, styles: Dict[str, Dict[str, str]]) -> go.Figure:
+    fig = go.Figure()
+    if force_df.empty:
+        return fig
+    for drv, g in force_df.groupby("Driver"):
+        g2 = g.copy()
+        g2["SpeedBin"] = (g2["Speed"] / 5).round() * 5
+        b = g2.groupby("SpeedBin", as_index=False)["Power_kW"].median()
+        fig.add_trace(go.Scatter(x=b["SpeedBin"], y=b["Power_kW"], mode="lines+markers", name=drv, line=dict(color=styles.get(drv, {}).get("color", "#aaa"))))
+    fig.update_layout(height=390, margin=dict(l=20, r=20, t=35, b=35), xaxis_title="Speed [km/h]", yaxis_title="Estimated power at wheels [kW]", hovermode="x unified", legend=dict(orientation="h", y=1.05))
+    return fig
+
+
+def plot_gear_ratio_bars(ratio_df: pd.DataFrame, styles: Dict[str, Dict[str, str]]) -> go.Figure:
+    fig = go.Figure()
+    if ratio_df.empty:
+        return fig
+    for drv, g in ratio_df.groupby("Driver"):
+        fig.add_trace(go.Bar(x=g["Gear"], y=g["RelativeToTopGear"], name=drv, marker_color=styles.get(drv, {}).get("color", "#aaa")))
+    fig.update_layout(height=390, margin=dict(l=20, r=20, t=35, b=35), xaxis_title="Gear", yaxis_title="Relative ratio proxy vs top gear", barmode="group", legend=dict(orientation="h", y=1.05))
+    return fig
+
+
+def plot_shift_map(lap_tels: Dict[str, pd.DataFrame], selected_driver: str, styles: Dict[str, Dict[str, str]]) -> go.Figure:
+    tel = lap_tels.get(selected_driver, pd.DataFrame())
+    fig = go.Figure()
+    if tel.empty or not {"Speed", "RPM", "nGear"}.issubset(tel.columns):
+        return fig
+    df = tel[["Speed", "RPM", "nGear", "Distance"]].dropna().copy()
+    if df.empty:
+        return fig
+    df["Gear"] = df["nGear"].round().astype(int)
+    fig = px.scatter(df, x="Speed", y="RPM", color="Gear", hover_data=["Distance"], color_continuous_scale="Turbo")
+    fig.update_layout(height=420, margin=dict(l=20, r=20, t=35, b=35), xaxis_title="Speed [km/h]", yaxis_title="RPM")
+    return fig
+
+
+def plot_energy_channels(lap_tels: Dict[str, pd.DataFrame], labels: Dict[str, str], styles: Dict[str, Dict[str, str]], channel: str) -> go.Figure:
+    fig = go.Figure()
+    for drv, tel in lap_tels.items():
+        if channel in tel.columns and "Distance" in tel.columns:
+            fig.add_trace(go.Scatter(x=tel["Distance"], y=tel[channel], mode="lines", name=labels.get(drv, drv), line=dict(color=styles.get(drv, {}).get("color", "#aaa"))))
+    return update_fig_layout(fig, height=360, ytitle=channel)
+
+
 # ------------------------------------------------------------
 # Plot helpers
 # ------------------------------------------------------------
@@ -1050,6 +1237,7 @@ tabs = st.tabs([
     "Corner exits",
     "Track maps",
     "Tyres & stints",
+    "Power unit",
     "Exports",
 ])
 
@@ -1240,7 +1428,66 @@ with tabs[5]:
             fig.update_layout(height=390, margin=dict(l=10, r=10, t=30, b=20), xaxis_title="Timed laps in stint", yaxis_title="Median lap [s]")
             st.plotly_chart(fig, use_container_width=True)
 
+
 with tabs[6]:
+    st.markdown("### Power unit metrics")
+    st.caption(
+        "Public FastF1 data does not normally expose true PU internals such as MGU-K deployment, MGU-H harvest, battery SOC, fuel flow or torque. "
+        "This tab uses speed, RPM and gear traces to derive comparative longitudinal metrics. Treat absolute force/power values as model estimates."
+    )
+
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        mass_kg = st.number_input("Assumed car mass incl. driver/fuel [kg]", min_value=650.0, max_value=950.0, value=798.0, step=5.0)
+    with c2:
+        cda = st.number_input("CdA estimate [m²]", min_value=0.5, max_value=2.2, value=1.15, step=0.05)
+    with c3:
+        crr = st.number_input("Rolling resistance coefficient", min_value=0.005, max_value=0.030, value=0.013, step=0.001, format="%.3f")
+
+    force_df = tractive_force_dataframe(lap_tels, labels, mass_kg=mass_kg, cda=cda, crr=crr)
+    ratio_df = gear_ratio_proxy_table(lap_tels, labels)
+    energy_channels = find_energy_channels(lap_tels)
+
+    metric_cards = []
+    summary = acceleration_zone_summary(force_df)
+    if not summary.empty:
+        best_acc = summary.sort_values("MeanAccel_ms2", ascending=False).iloc[0]
+        best_power = summary.sort_values("PeakPower_kW", ascending=False).iloc[0]
+        metric_cards.append(f"<div class='f1-stat'><div class='f1-stat-title'>Best accel driver</div><div class='f1-stat-main'>{html.escape(str(best_acc['Driver']))}</div><div class='f1-small'>{best_acc['MeanAccel_ms2']:.2f} m/s² avg WOT accel</div></div>")
+        metric_cards.append(f"<div class='f1-stat'><div class='f1-stat-title'>Peak est. wheel power</div><div class='f1-stat-main'>{best_power['PeakPower_kW']:.0f} kW</div><div class='f1-small'>{html.escape(str(best_power['Driver']))}</div></div>")
+    metric_cards.append(f"<div class='f1-stat'><div class='f1-stat-title'>ERS channels found</div><div class='f1-stat-main'>{len(energy_channels)}</div><div class='f1-small'>{'available' if energy_channels else 'not in public feed'}</div></div>")
+    metric_cards.append(f"<div class='f1-stat'><div class='f1-stat-title'>Gear ratios</div><div class='f1-stat-main'>{'OK' if not ratio_df.empty else '—'}</div><div class='f1-small'>RPM / speed proxy</div></div>")
+    render_html("<div class='f1-card'><div class='f1-card-title'>PU derived summary</div><div class='f1-grid f1-grid-4'>" + "".join(metric_cards) + "</div></div>")
+
+    st.markdown("#### Tractive force diagram")
+    if force_df.empty:
+        st.info("Speed/acceleration telemetry is not available for the selected laps.")
+    else:
+        st.plotly_chart(plot_tractive_force(force_df, styles), use_container_width=True)
+        st.plotly_chart(plot_power_speed(force_df, styles), use_container_width=True)
+        st.markdown("#### Acceleration-zone summary")
+        st.dataframe(summary.round(3), use_container_width=True, hide_index=True)
+
+    st.markdown("#### Gear ratio plots")
+    if ratio_df.empty:
+        st.info("RPM, gear or speed data is not available for a gear-ratio proxy plot.")
+    else:
+        st.plotly_chart(plot_gear_ratio_bars(ratio_df, styles), use_container_width=True)
+        st.dataframe(ratio_df.round(3), use_container_width=True, hide_index=True)
+
+        shift_driver = st.selectbox("Shift map driver", list(selected_laps.keys()), index=0)
+        st.plotly_chart(plot_shift_map(lap_tels, shift_driver, styles), use_container_width=True)
+        st.caption("Gear ratio proxy is RPM divided by vehicle speed. Absolute ratios require tyre radius/final drive information, which FastF1 does not provide.")
+
+    st.markdown("#### Energy deployment / harvest")
+    if not energy_channels:
+        st.info("No ERS deployment, harvest, SOC or battery-energy channels were found in the loaded FastF1 telemetry. Public F1 timing data normally does not expose these channels.")
+    else:
+        ch = st.selectbox("Energy channel", energy_channels)
+        st.plotly_chart(plot_energy_channels(lap_tels, labels, styles, ch), use_container_width=True)
+
+
+with tabs[7]:
     st.markdown("### Export")
     file_base = f"telemetry_{year}_{event_name}_{session_code}_{'_'.join(selected_laps.keys())}".replace(" ", "_").replace("/", "-")
     st.download_button(
