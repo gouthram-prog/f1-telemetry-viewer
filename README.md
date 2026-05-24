@@ -1,31 +1,34 @@
-# F1 Engineering Telemetry Viewer v12
+# F1 Telemetry Command Centre v13
 
-Mobile-first Streamlit + FastF1 telemetry dashboard.
+A mobile-first FastF1 Streamlit dashboard for engineering-style F1 lap analysis.
 
-## Features retained from v10
-- Filtered year / Grand Prix / session availability
+## What is retained from v12
+
+- Available-year/event/session filtering
 - Up to 5-driver comparison
-- Accurate lap and sector times
-- Telemetry overlays
-- Delta-to-reference plots
-- Corner minimum speed table
-- Corner-exit acceleration and straight-line summaries
-- Track map and two-driver speed-dominance map
-- Tyre age/fresh-used information
-- Practice stint classification for long-run/quali-style runs
-- Power unit proxy tab: tractive force, power-speed, gear ratios, shift map, ERS-channel detection
-- CSV export
+- Reference-driver delta plots
+- Multi-channel telemetry overlays
+- Plot Lab with selectable X/Y channels
+- Corner minimum speed tables
+- Corner-exit / straight acceleration analysis
+- Track maps and speed-dominance maps
+- Tyre information and stint/run-type statistics
+- Power unit proxy tab: tractive force, wheel power, gear ratio and shift map plots
+- Export of telemetry, deltas and analysis tables
 
-## v12 improvements
-- Restored v10 feature set after the failed v11 rebuild
-- Removed risky HTML wrappers around widgets that could show code snippets
-- Added Plot Lab for flexible overlays of channels vs distance/time/lap percent/speed
-- Added automatic Insights tab
-- Included `.streamlit/config.toml` theme file
-- More robust single-file app for easier GitHub upload
+## v13 improvements
+
+- Polished mobile-first dark UI
+- Sticky command header
+- KPI ribbon: fastest selected lap, reference driver, top speed, stint laps analysed
+- Driver badge strip with team colours and tyre chips
+- Improved Plotly styling globally across all charts
+- More readable chart containers, legends, hover labels and mobile spacing
+- Retains the v12 single-file structure for easier GitHub mobile upload
 
 ## Deploy
-Upload these files/folders to GitHub:
+
+Upload/replace these files in your GitHub repo:
 
 ```text
 app.py
@@ -34,8 +37,4 @@ README.md
 .streamlit/config.toml
 ```
 
-Streamlit main file path:
-
-```text
-app.py
-```
+Then commit. Streamlit Cloud should redeploy automatically.

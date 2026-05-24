@@ -147,6 +147,49 @@ st.markdown(
         div[data-testid="stHorizontalBlock"] { gap:.35rem; }
         div[data-testid="stPlotlyChart"] { margin-bottom:.25rem; }
     }
+
+
+    /* v13 visual system: compact race-engineering dashboard */
+    .f1-topbar {
+        position: sticky; top: 0; z-index: 999; backdrop-filter: blur(16px);
+        background: linear-gradient(180deg, rgba(4,7,12,.94), rgba(4,7,12,.68));
+        border-bottom: 1px solid rgba(255,255,255,.08); margin: -.55rem -.55rem .8rem -.55rem; padding: .65rem .65rem .55rem;
+    }
+    .f1-hero { position:relative; overflow:hidden; border-color:rgba(255,255,255,.13) !important; }
+    .f1-hero:after {
+        content:""; position:absolute; inset:-2px; pointer-events:none;
+        background: radial-gradient(circle at 86% 18%, rgba(255,24,1,.23), transparent 22%),
+                    radial-gradient(circle at 18% 78%, rgba(39,244,210,.13), transparent 26%);
+    }
+    .f1-hero > * { position:relative; z-index:1; }
+    .f1-dashboard-grid { display:grid; grid-template-columns:1.2fr .8fr; gap:.75rem; align-items:stretch; }
+    .f1-control-card { border:1px solid rgba(255,255,255,.10); border-radius:18px; padding:.85rem; background:linear-gradient(145deg, rgba(18,27,40,.92), rgba(8,12,20,.96)); box-shadow:0 14px 36px rgba(0,0,0,.28); }
+    .f1-driver-strip { display:flex; gap:.45rem; overflow-x:auto; padding:.15rem 0 .25rem; }
+    .f1-driver-badge { min-width:5.8rem; border-radius:14px; padding:.55rem .6rem; background:rgba(255,255,255,.045); border:1px solid rgba(255,255,255,.09); box-shadow:inset 0 0 0 1px rgba(255,255,255,.02); }
+    .f1-driver-badge-top { display:flex; justify-content:space-between; align-items:center; gap:.35rem; }
+    .f1-driver-code { font-size:1.15rem; font-weight:1000; letter-spacing:.3px; }
+    .f1-team-dot { width:.65rem; height:.65rem; border-radius:999px; box-shadow:0 0 14px currentColor; }
+    .f1-kpi-grid { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:.55rem; margin:.55rem 0 .7rem; }
+    .f1-kpi { position:relative; overflow:hidden; border:1px solid rgba(255,255,255,.09); border-radius:16px; padding:.75rem; background:linear-gradient(155deg, rgba(26,38,55,.88), rgba(8,12,20,.96)); min-height:5.4rem; }
+    .f1-kpi:before { content:""; position:absolute; left:0; right:0; top:0; height:3px; background:linear-gradient(90deg, var(--accent,#ff1801), transparent); }
+    .f1-kpi-label { color:rgba(255,255,255,.62); font-size:.70rem; text-transform:uppercase; letter-spacing:.65px; font-weight:850; }
+    .f1-kpi-value { font-size:1.28rem; font-weight:1000; margin-top:.32rem; line-height:1.1; }
+    .f1-kpi-sub { color:rgba(255,255,255,.58); font-size:.72rem; margin-top:.2rem; }
+    .f1-tab-note { color:rgba(255,255,255,.58); font-size:.78rem; margin:-.15rem 0 .6rem; }
+    .stPlotlyChart { border:1px solid rgba(255,255,255,.08); border-radius:18px; padding:.35rem; background:linear-gradient(180deg, rgba(9,14,23,.80), rgba(5,8,14,.92)); box-shadow:0 10px 26px rgba(0,0,0,.24); }
+    div[data-testid="stDataFrame"] { box-shadow:0 10px 26px rgba(0,0,0,.22); background:rgba(5,8,14,.80); }
+    [data-testid="stMetric"] { background:linear-gradient(155deg, rgba(26,38,55,.85), rgba(8,12,20,.96)); border:1px solid rgba(255,255,255,.09); padding:.65rem; border-radius:14px; }
+    .f1-table th { position:sticky; top:0; z-index:2; }
+    .f1-chip { background:radial-gradient(circle at 35% 30%, rgba(255,255,255,.18), rgba(255,255,255,.03)); }
+    @media (max-width:760px) {
+      .f1-topbar { margin:-.55rem -.42rem .65rem -.42rem; padding:.55rem .42rem .45rem; }
+      .f1-dashboard-grid { grid-template-columns:1fr; }
+      .f1-kpi-grid { grid-template-columns:repeat(2, minmax(0,1fr)); }
+      .f1-kpi { min-height:4.8rem; padding:.65rem; }
+      .f1-kpi-value { font-size:1.08rem; }
+      .f1-driver-badge { min-width:5.2rem; }
+    }
+
     </style>
     """,
     unsafe_allow_html=True,
@@ -159,6 +202,52 @@ def render_html(markup: str):
         st.html(markup)
     except Exception:
         st.markdown(markup, unsafe_allow_html=True)
+
+
+# Global Plotly skin: keeps existing plots/features, upgrades visual quality.
+_ORIGINAL_PLOTLY_CHART = st.plotly_chart
+
+def _polish_figure(fig):
+    if not isinstance(fig, go.Figure):
+        return fig
+    fig.update_layout(
+        template="plotly_dark",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(5,9,16,0.62)",
+        font=dict(family="Inter, system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, sans-serif", color="#F5F7FA", size=12),
+        margin=dict(l=8, r=8, t=38, b=32),
+        legend=dict(
+            orientation="h", yanchor="bottom", y=1.01, xanchor="left", x=0,
+            bgcolor="rgba(0,0,0,0)", font=dict(size=11)
+        ),
+        hovermode="x unified",
+        hoverlabel=dict(bgcolor="#101823", bordercolor="rgba(255,255,255,.14)", font_size=12),
+    )
+    fig.update_xaxes(
+        showgrid=True, gridcolor="rgba(255,255,255,.055)", zeroline=False,
+        linecolor="rgba(255,255,255,.18)", tickfont=dict(size=10)
+    )
+    fig.update_yaxes(
+        showgrid=True, gridcolor="rgba(255,255,255,.055)", zeroline=False,
+        linecolor="rgba(255,255,255,.18)", tickfont=dict(size=10)
+    )
+    for tr in fig.data:
+        if getattr(tr, "type", None) == "scatter":
+            if getattr(tr, "mode", "") and "markers" in tr.mode:
+                tr.marker = tr.marker or {}
+                if not tr.marker.size:
+                    tr.marker.size = 5
+                if tr.marker.opacity is None:
+                    tr.marker.opacity = 0.78
+            if getattr(tr, "line", None):
+                if tr.line.width is None:
+                    tr.line.width = 2
+    return fig
+
+def _styled_plotly_chart(fig, *args, **kwargs):
+    return _ORIGINAL_PLOTLY_CHART(_polish_figure(fig), *args, **kwargs)
+
+st.plotly_chart = _styled_plotly_chart
 
 
 SESSION_TYPES = {
@@ -1276,13 +1365,15 @@ def export_csv(lap_tels: Dict[str, pd.DataFrame], labels: Dict[str, str], deltas
 # UI
 # ------------------------------------------------------------
 render_html("""
-<div class="f1-hero">
-  <div class="f1-brand"><span class="f1-logo">F1</span><span>Telemetry Viewer</span></div>
-  <div class="f1-subtitle">FastF1 engineering dashboard: multi-driver telemetry, reference deltas, corner exits, track dominance, tyres, stints and exports.</div>
+<div class="f1-topbar">
+  <div class="f1-hero">
+    <div class="f1-brand"><span class="f1-logo">F1</span><span>Telemetry Command Centre</span></div>
+    <div class="f1-subtitle">FastF1 engineering dashboard: lap deltas, telemetry overlays, tyre/stint intelligence, track dominance, PU proxies and exportable analysis.</div>
+  </div>
 </div>
 """)
 
-render_html("<div class='f1-card'><div class='f1-card-title'>Session selection</div><div class='f1-subtitle'>Pick a completed FastF1 event/session. The dropdowns are filtered to available public data.</div></div>")
+render_html("<div class='f1-control-card'><div class='f1-card-title'>Session selection</div><div class='f1-subtitle'>Filtered to public FastF1 data already available for the selected season. Load once; cached sessions are faster afterwards.</div></div>")
 current_year = pd.Timestamp.today().year
 c1, c2, c3 = st.columns([0.85, 1.6, 1.1])
 with c1:
@@ -1337,7 +1428,7 @@ if not drivers:
     st.warning("No driver lap data found for this session.")
     st.stop()
 
-render_html("<div class='f1-card'><div class='f1-card-title'>Drivers and lap selection</div><div class='f1-subtitle'>Compare up to 5 cars. The reference driver defines delta and dominance plots.</div></div>")
+render_html("<div class='f1-control-card'><div class='f1-card-title'>Drivers and lap selection</div><div class='f1-subtitle'>Compare up to 5 cars. The reference driver defines all delta, dominance and insight calculations.</div></div>")
 default_drivers = drivers[: min(5, len(drivers))]
 selected_drivers = st.multiselect("Compare up to 5 drivers", drivers, default=default_drivers, max_selections=5)
 if not selected_drivers:
@@ -1447,6 +1538,36 @@ summary_html = """
 </div>
 """.format(ref=html.escape(reference_driver), count=len(selected_laps), rows="".join(rows_html))
 render_html(summary_html)
+
+# Race-engineering KPI ribbon and driver strip. Keeps the existing table but adds a mobile-friendly command view.
+try:
+    best_drv = min(selected_laps, key=lambda d: seconds(selected_laps[d]["LapTime"]) if seconds(selected_laps[d]["LapTime"]) is not None else 9999)
+    best_lap = selected_laps[best_drv]
+    max_speed_rows = []
+    for _drv, _tel in lap_tels.items():
+        if "Speed" in _tel.columns and len(_tel):
+            max_speed_rows.append((_drv, float(pd.to_numeric(_tel["Speed"], errors="coerce").max())))
+    top_speed_drv, top_speed = max(max_speed_rows, key=lambda x: x[1]) if max_speed_rows else ("—", float("nan"))
+    tyre_count = len(stint_export) if isinstance(stint_export, pd.DataFrame) else 0
+    kpi_html = f"""
+    <div class='f1-kpi-grid'>
+      <div class='f1-kpi' style='--accent:{styles[best_drv]['color']}'><div class='f1-kpi-label'>Fastest selected</div><div class='f1-kpi-value'>{html.escape(best_drv)} · {fmt_laptime(best_lap['LapTime'])}</div><div class='f1-kpi-sub'>Lap {int(best_lap['LapNumber'])}</div></div>
+      <div class='f1-kpi' style='--accent:#27f4d2'><div class='f1-kpi-label'>Reference</div><div class='f1-kpi-value'>{html.escape(reference_driver)}</div><div class='f1-kpi-sub'>delta baseline</div></div>
+      <div class='f1-kpi' style='--accent:#ffb800'><div class='f1-kpi-label'>Top speed</div><div class='f1-kpi-value'>{top_speed:.1f} km/h</div><div class='f1-kpi-sub'>{html.escape(top_speed_drv)}</div></div>
+      <div class='f1-kpi' style='--accent:#b14cff'><div class='f1-kpi-label'>Stint laps analysed</div><div class='f1-kpi-value'>{tyre_count}</div><div class='f1-kpi-sub'>selected drivers</div></div>
+    </div>
+    """
+    badge_html = []
+    for _drv, _lap in selected_laps.items():
+        _col = styles[_drv]['color']
+        _team = html.escape(str(styles[_drv]['team']))
+        _comp = str(_lap.get('Compound') or '—').upper()
+        _life = _lap.get('TyreLife')
+        _life_txt = '—' if pd.isna(_life) else str(int(_life))
+        badge_html.append(f"<div class='f1-driver-badge'><div class='f1-driver-badge-top'><span class='f1-driver-code'>{html.escape(_drv)}</span><span class='f1-team-dot' style='background:{_col}; color:{_col}'></span></div><div class='f1-small'>{_team}</div><div><span class='f1-chip f1-chip-{_comp.lower()}'>{html.escape(_comp[:1])}</span><span class='f1-small'>{_life_txt} laps</span></div></div>")
+    render_html(kpi_html + "<div class='f1-driver-strip'>" + "".join(badge_html) + "</div>")
+except Exception:
+    pass
 
 # Tabs
 tabs = st.tabs([
