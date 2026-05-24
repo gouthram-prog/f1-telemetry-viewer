@@ -1,6 +1,6 @@
-# F1 Telemetry Viewer v6
+# F1 Telemetry Studio v11
 
-Mobile-first Streamlit telemetry dashboard powered by FastF1.
+A mobile-first FastF1 telemetry dashboard built for Streamlit Cloud.
 
 ## Run locally
 
@@ -9,35 +9,20 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Deploy to Streamlit Cloud
+## Highlights
 
-Upload/replace these files in your GitHub repo:
-
-- `app.py`
-- `requirements.txt`
-- `README.md`
-
-Streamlit Cloud will redeploy automatically after the commit.
-
-## Main changes in v6
-
-- Full dark F1-style mobile-first UI
-- No raw HTML/code snippets displayed
-- Colour-coded selected-lap table
-- Team colours and driver fallback mapping
-- Tyre chips and tyre summary cards
-- Delta to reference driver
-- Multi-driver telemetry overlays
-- Corner-exit and straight acceleration analysis
-- Two-colour speed-dominance track map
-- Practice stint/run-type analysis
+- completed event/session filtering
+- mobile-first dark UI
+- driver cards, tyre chips and team colours
+- lap heatmap and accurate sector timings
+- flexible telemetry overlay lab
+- reference-driver delta plots
+- speed-based track dominance
+- stint and tyre-life analysis
+- PU-style proxy plots: shift map and acceleration-vs-speed
+- automated insight tables
 - CSV export
 
+## Note
 
-## v8 update
-
-- Shift map can compare two drivers.
-- Gear colours are discrete from 1 to 8.
-- Driver 1 uses dot markers and solid inferred trend lines.
-- Driver 2 uses diamond markers and dashed inferred trend lines.
-- Trend lines are linear RPM-vs-speed fits per gear.
+Public FastF1 data does not normally include true ERS SOC/harvest/deployment channels. The Power Unit tab therefore uses available public telemetry to derive proxies.
