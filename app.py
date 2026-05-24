@@ -900,17 +900,124 @@ def plot_gear_ratio_bars(ratio_df: pd.DataFrame, styles: Dict[str, Dict[str, str
     return fig
 
 
-def plot_shift_map(lap_tels: Dict[str, pd.DataFrame], selected_driver: str, styles: Dict[str, Dict[str, str]]) -> go.Figure:
-    tel = lap_tels.get(selected_driver, pd.DataFrame())
+def plot_shift_map_compare(
+    lap_tels: Dict[str, pd.DataFrame],
+    driver_1: str,
+    driver_2: Optional[str],
+    labels: Dict[str, str],
+) -> go.Figure:
+    """RPM-vs-speed shift map with inferred linear ratio lines per gear.
+
+    Uses only FastF1 public telemetry channels: Speed, RPM and nGear.
+    The slope of each trend line is a ratio proxy. First driver uses circle
+    markers and solid trend lines. Second driver uses diamond markers and
+    dashed trend lines. Colours are discrete by gear, not by driver.
+    """
     fig = go.Figure()
-    if tel.empty or not {"Speed", "RPM", "nGear"}.issubset(tel.columns):
-        return fig
-    df = tel[["Speed", "RPM", "nGear", "Distance"]].dropna().copy()
-    if df.empty:
-        return fig
-    df["Gear"] = df["nGear"].round().astype(int)
-    fig = px.scatter(df, x="Speed", y="RPM", color="Gear", hover_data=["Distance"], color_continuous_scale="Turbo")
-    fig.update_layout(height=420, margin=dict(l=20, r=20, t=35, b=35), xaxis_title="Speed [km/h]", yaxis_title="RPM")
+    gear_colors = {
+        1: "#ff2d55",
+        2: "#ff9500",
+        3: "#ffd60a",
+        4: "#32d74b",
+        5: "#64d2ff",
+        6: "#0a84ff",
+        7: "#bf5af2",
+        8: "#8e8e93",
+    }
+
+    def _prep(driver: str) -> pd.DataFrame:
+        tel = lap_tels.get(driver, pd.DataFrame())
+        if tel.empty or not {"Speed", "RPM", "nGear"}.issubset(tel.columns):
+            return pd.DataFrame()
+        cols = ["Speed", "RPM", "nGear"] + (["Distance"] if "Distance" in tel.columns else [])
+        df = tel[cols].dropna().copy()
+        df = df[(df["Speed"] > 20) & (df["RPM"] > 3000)]
+        if df.empty:
+            return df
+        df["Gear"] = df["nGear"].round().astype(int)
+        df = df[df["Gear"].between(1, 8)]
+        return df
+
+    driver_specs = [(driver_1, "circle", "solid", 0.82)]
+    if driver_2 and driver_2 != driver_1:
+        driver_specs.append((driver_2, "diamond", "dash", 0.72))
+
+    legend_seen = set()
+    trend_seen = set()
+    for driver, marker_symbol, dash_style, opacity in driver_specs:
+        df = _prep(driver)
+        if df.empty:
+            continue
+        dlabel = labels.get(driver, driver)
+        for gear in range(1, 9):
+            g = df[df["Gear"] == gear].copy()
+            if len(g) < 8:
+                continue
+            # Limit trace size for mobile/browser responsiveness while preserving distribution.
+            if len(g) > 180:
+                g_plot = g.iloc[:: max(1, len(g)//180)].copy()
+            else:
+                g_plot = g
+            show_gear_legend = gear not in legend_seen
+            legend_seen.add(gear)
+            hover_cols = ["Distance"] if "Distance" in g_plot.columns else []
+            fig.add_trace(go.Scatter(
+                x=g_plot["Speed"],
+                y=g_plot["RPM"],
+                mode="markers",
+                name=f"G{gear}" if show_gear_legend else f"G{gear} {dlabel}",
+                legendgroup=f"G{gear}",
+                showlegend=show_gear_legend,
+                marker=dict(
+                    color=gear_colors[gear],
+                    size=6 if marker_symbol == "circle" else 7,
+                    symbol=marker_symbol,
+                    opacity=opacity,
+                    line=dict(width=0.4, color="rgba(255,255,255,0.35)"),
+                ),
+                customdata=g_plot[hover_cols] if hover_cols else None,
+                hovertemplate=(
+                    f"<b>{dlabel}</b><br>Gear {gear}<br>Speed=%{{x:.1f}} km/h<br>RPM=%{{y:.0f}}"
+                    + ("<br>Distance=%{customdata[0]:.0f} m" if hover_cols else "")
+                    + "<extra></extra>"
+                ),
+            ))
+
+            # Linear inferred gear-ratio trend. RPM should be near-linear with speed inside each gear.
+            x = g["Speed"].to_numpy(dtype=float)
+            y = g["RPM"].to_numpy(dtype=float)
+            if len(np.unique(np.round(x, 1))) < 3:
+                continue
+            slope, intercept = np.polyfit(x, y, 1)
+            x_line = np.linspace(np.nanpercentile(x, 5), np.nanpercentile(x, 95), 40)
+            y_line = slope * x_line + intercept
+            key = (driver, gear)
+            if key not in trend_seen:
+                trend_seen.add(key)
+                fig.add_trace(go.Scatter(
+                    x=x_line,
+                    y=y_line,
+                    mode="lines",
+                    name=f"{dlabel} G{gear} trend",
+                    legendgroup=f"trend-{driver}",
+                    showlegend=False,
+                    line=dict(color=gear_colors[gear], width=2.5, dash=dash_style),
+                    hovertemplate=f"<b>{dlabel}</b><br>Gear {gear} trend<br>RPM = {slope:.1f} × Speed + {intercept:.0f}<extra></extra>",
+                ))
+
+    fig.update_layout(
+        height=470,
+        margin=dict(l=20, r=20, t=35, b=35),
+        xaxis_title="Speed [km/h]",
+        yaxis_title="RPM",
+        legend=dict(orientation="h", y=1.10, x=0),
+        hovermode="closest",
+    )
+    fig.add_annotation(
+        xref="paper", yref="paper", x=0, y=1.03, showarrow=False, align="left",
+        text="● first driver / solid trends &nbsp;&nbsp; ◆ second driver / dashed trends",
+        font=dict(size=12, color="rgba(245,247,251,0.72)"),
+    )
     return fig
 
 
@@ -1475,9 +1582,15 @@ with tabs[6]:
         st.plotly_chart(plot_gear_ratio_bars(ratio_df, styles), use_container_width=True)
         st.dataframe(ratio_df.round(3), use_container_width=True, hide_index=True)
 
-        shift_driver = st.selectbox("Shift map driver", list(selected_laps.keys()), index=0)
-        st.plotly_chart(plot_shift_map(lap_tels, shift_driver, styles), use_container_width=True)
-        st.caption("Gear ratio proxy is RPM divided by vehicle speed. Absolute ratios require tyre radius/final drive information, which FastF1 does not provide.")
+        shift_options = list(selected_laps.keys())
+        c1, c2 = st.columns(2)
+        with c1:
+            shift_driver_1 = st.selectbox("Shift map driver 1", shift_options, index=0)
+        with c2:
+            default_second = 1 if len(shift_options) > 1 else 0
+            shift_driver_2 = st.selectbox("Shift map driver 2", shift_options, index=default_second)
+        st.plotly_chart(plot_shift_map_compare(lap_tels, shift_driver_1, shift_driver_2, labels), use_container_width=True)
+        st.caption("Shift map uses discrete gear colours. Dots/solid trend lines are driver 1; diamonds/dashed trend lines are driver 2. Trend lines are inferred linear RPM-vs-speed fits per gear.")
 
     st.markdown("#### Energy deployment / harvest")
     if not energy_channels:

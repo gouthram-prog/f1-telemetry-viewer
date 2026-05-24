@@ -32,3 +32,12 @@ Streamlit Cloud will redeploy automatically after the commit.
 - Two-colour speed-dominance track map
 - Practice stint/run-type analysis
 - CSV export
+
+
+## v8 update
+
+- Shift map can compare two drivers.
+- Gear colours are discrete from 1 to 8.
+- Driver 1 uses dot markers and solid inferred trend lines.
+- Driver 2 uses diamond markers and dashed inferred trend lines.
+- Trend lines are linear RPM-vs-speed fits per gear.
