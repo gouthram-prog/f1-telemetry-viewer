@@ -10,7 +10,9 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+import plotly.io as pio
 import streamlit as st
+from streamlit.components.v1 import html as components_html
 
 try:
     from fastf1 import plotting as f1plotting
@@ -25,77 +27,135 @@ st.set_page_config(page_title="F1 Engineering Telemetry Viewer", layout="wide")
 CACHE_DIR = Path("./fastf1_cache")
 CACHE_DIR.mkdir(exist_ok=True)
 fastf1.Cache.enable_cache(str(CACHE_DIR))
+pio.templates.default = "plotly_dark"
 
 st.markdown(
     """
     <style>
-    /* Mobile-first Streamlit layout: reduce wasted space and keep controls usable on iPhone Pro Max. */
+    :root {
+        --f1-bg:#070b12;
+        --f1-panel:#0c1420;
+        --f1-panel2:#111b29;
+        --f1-line:rgba(255,255,255,.105);
+        --f1-text:#f5f7fb;
+        --f1-muted:rgba(245,247,251,.62);
+        --f1-red:#ff383f;
+        --f1-green:#27e782;
+        --f1-yellow:#ffd21f;
+    }
+    html, body, [data-testid="stAppViewContainer"] {
+        background: radial-gradient(circle at 20% 0%, rgba(0, 144, 255, .12), transparent 35%), linear-gradient(180deg, #05080d 0%, #080d15 100%) !important;
+        color: var(--f1-text);
+    }
     .block-container {
-        padding-top: 0.8rem;
-        padding-left: 0.65rem;
-        padding-right: 0.65rem;
-        padding-bottom: 1.5rem;
-        max-width: 1500px;
+        padding-top: 0.55rem;
+        padding-left: 0.55rem;
+        padding-right: 0.55rem;
+        padding-bottom: 1.2rem;
+        max-width: 1120px;
     }
-    h1 { font-size: clamp(1.35rem, 5vw, 2.35rem) !important; line-height: 1.15; }
-    h2 { font-size: clamp(1.15rem, 4vw, 1.75rem) !important; }
-    h3 { font-size: clamp(1.0rem, 3.6vw, 1.35rem) !important; }
-    div[data-testid="stMetricValue"] { font-size: clamp(1.0rem, 4vw, 1.5rem); }
-    div[data-testid="stDataFrame"] { font-size: 0.78rem; }
-    .stTabs [data-baseweb="tab-list"] {
-        gap: 0.2rem;
-        overflow-x: auto;
-        flex-wrap: nowrap;
+    [data-testid="stHeader"] { background: transparent; }
+    [data-testid="stSidebar"] { background: #070b12; }
+    h1,h2,h3 { letter-spacing: .2px; }
+    h1 { font-size: clamp(1.22rem, 5vw, 1.95rem) !important; line-height:1.1; }
+    h2 { font-size: clamp(1.05rem, 4vw, 1.45rem) !important; }
+    h3 { font-size: clamp(.95rem, 3.6vw, 1.2rem) !important; }
+    .stTabs [data-baseweb="tab-list"] { gap: .15rem; overflow-x: auto; flex-wrap: nowrap; border-bottom:1px solid rgba(255,255,255,.08); }
+    .stTabs [data-baseweb="tab"] { min-width: max-content; padding: .55rem .65rem; border-radius:10px 10px 0 0; font-size:.88rem; }
+    .stTabs [aria-selected="true"] { color:#ff4048 !important; border-bottom:2px solid #ff4048; }
+    div[data-testid="stSelectbox"] > div, div[data-testid="stMultiSelect"] > div, div[data-testid="stNumberInput"] > div, div[data-testid="stRadio"] {
+        border-radius: 14px;
     }
-    .stTabs [data-baseweb="tab"] {
-        padding-left: 0.45rem;
-        padding-right: 0.45rem;
-        min-width: max-content;
-        font-size: 0.86rem;
+    .stButton > button, .stDownloadButton > button {
+        border-radius: 12px !important;
+        background: linear-gradient(180deg, rgba(255,255,255,.08), rgba(255,255,255,.03)) !important;
+        border:1px solid rgba(255,255,255,.12) !important;
     }
-    section[data-testid="stSidebar"] { min-width: 18rem; }
-    @media (max-width: 760px) {
-        .block-container { padding-left: 0.45rem; padding-right: 0.45rem; }
-        div[data-testid="column"] { width: 100% !important; flex: 1 1 100% !important; }
-        div[data-testid="stHorizontalBlock"] { gap: 0.25rem; }
-        div[data-testid="stPlotlyChart"] { margin-bottom: 0.35rem; }
+    .f1-shell {
+        border:1px solid var(--f1-line);
+        border-radius:18px;
+        background:linear-gradient(145deg, rgba(18,29,43,.94), rgba(5,10,17,.96));
+        box-shadow:0 12px 34px rgba(0,0,0,.33), inset 0 0 0 1px rgba(255,255,255,.035);
+        padding:12px;
+        margin-bottom:12px;
+    }
+    .f1-header { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .f1-brand { display:flex; align-items:center; gap:12px; font-weight:900; letter-spacing:.5px; font-size:clamp(1.1rem, 4.6vw, 1.7rem); }
+    .f1-logo-text { color:#ff1e1e; font-style:italic; font-weight:1000; font-size:1.4em; letter-spacing:-2px; text-shadow:0 0 18px rgba(255,30,30,.35); }
+    .f1-menu { font-size:1.35rem; color:rgba(255,255,255,.78); }
+    .f1-sub { color:var(--f1-muted); font-size:.82rem; margin-top:8px; }
+    .f1-green { color:var(--f1-green); }
+    .f1-red { color:var(--f1-red); }
+    .f1-control-note { color:var(--f1-muted); font-size:.78rem; padding:.1rem .2rem; }
+    .f1-section-title { font-weight:850; text-transform:uppercase; letter-spacing:.8px; font-size:.95rem; margin: 2px 0 8px 2px; }
+    .f1-card { border:1px solid var(--f1-line); border-radius:16px; background:linear-gradient(180deg, rgba(19,29,42,.92), rgba(8,13,21,.96)); padding:12px; margin:10px 0; box-shadow:0 8px 24px rgba(0,0,0,.2); }
+    div[data-testid="stDataFrame"] { border:1px solid rgba(255,255,255,.08); border-radius:14px; overflow:hidden; }
+
+    /* polished dashboard table/cards */
+    .f1-hero { border:1px solid var(--f1-line); border-radius:18px; padding:14px; margin-bottom:12px; background:linear-gradient(145deg, rgba(9,23,35,.96), rgba(6,10,16,.98)); box-shadow:0 10px 32px rgba(0,0,0,.35), inset 0 0 40px rgba(0,184,255,.045); }
+    .f1-logo { color:#ff1e1e; font-style:italic; font-weight:1000; font-size:1.35em; letter-spacing:-2px; margin-right:.25rem; text-shadow:0 0 18px rgba(255,30,30,.35); }
+    .f1-subtitle { color:var(--f1-muted); font-size:.84rem; margin-top:.35rem; line-height:1.35; }
+    .f1-card-title { font-weight:900; text-transform:uppercase; letter-spacing:.7px; font-size:1.02rem; margin-bottom:.65rem; display:flex; align-items:center; gap:.5rem; }
+    .f1-pill { display:inline-flex; align-items:center; justify-content:center; border-radius:999px; padding:.18rem .52rem; font-size:.76rem; font-weight:850; background:#c8102e; color:#fff; line-height:1; }
+    .f1-table { width:100%; border-collapse:collapse; font-size:.88rem; overflow:hidden; border-radius:14px; }
+    .f1-table th { text-transform:uppercase; font-size:.72rem; color:rgba(255,255,255,.78); background:linear-gradient(180deg, rgba(255,255,255,.10), rgba(255,255,255,.045)); border:1px solid rgba(255,255,255,.07); padding:.58rem .5rem; white-space:nowrap; text-align:left; }
+    .f1-table td { border:1px solid rgba(255,255,255,.07); padding:.58rem .5rem; vertical-align:middle; white-space:nowrap; }
+    .f1-table tr:nth-child(even) td { background:rgba(255,255,255,.018); }
+    .f1-drivercell { display:flex; align-items:center; gap:.55rem; min-width:7.2rem; }
+    .f1-rank { width:2.3rem; height:2.3rem; border-radius:7px; display:inline-flex; align-items:center; justify-content:center; font-weight:950; color:#fff; box-shadow: inset 0 -8px 20px rgba(0,0,0,.18), 0 4px 14px rgba(0,0,0,.22); }
+    .f1-small { font-size:.74rem; color:rgba(255,255,255,.62); font-weight:500; }
+    .f1-team { font-weight:850; display:inline-flex; align-items:center; gap:.35rem; }
+    .f1-team-badge { display:inline-flex; align-items:center; justify-content:center; width:1.85rem; height:1.85rem; border-radius:.4rem; background:rgba(255,255,255,.075); border:1px solid rgba(255,255,255,.12); font-weight:900; }
+    .f1-delta-pos { color:#ff4b4b; font-weight:800; }
+    .f1-delta-neg { color:#28e48a; font-weight:800; }
+    .f1-delta-ref { color:#d840ff; font-weight:900; }
+    .f1-chip { display:inline-flex; align-items:center; justify-content:center; width:1.62rem; height:1.62rem; border-radius:999px; font-size:.76rem; font-weight:950; margin-right:.25rem; border:2px solid #c9ccd1; color:#fff; background:#111821; box-shadow:0 0 14px rgba(255,255,255,.06); }
+    .f1-chip-soft { border-color:#ff3241; color:#ff3241; }
+    .f1-chip-medium { border-color:#ffd21f; color:#ffd21f; }
+    .f1-chip-hard { border-color:#d7d7d7; color:#d7d7d7; }
+    .f1-chip-intermediate { border-color:#18d65b; color:#18d65b; }
+    .f1-chip-wet { border-color:#38a6ff; color:#38a6ff; }
+    .f1-status-fresh { color:#25e67e; background:rgba(37,230,126,.16); border-radius:999px; padding:.15rem .45rem; font-size:.72rem; font-weight:900; }
+    .f1-status-used { color:#ffd21f; background:rgba(255,210,31,.13); border-radius:999px; padding:.15rem .45rem; font-size:.72rem; font-weight:900; }
+    .f1-grid { display:grid; gap:.75rem; }
+    .f1-grid-5 { grid-template-columns:repeat(5, minmax(0, 1fr)); }
+    .f1-grid-3 { grid-template-columns:repeat(3, minmax(0, 1fr)); }
+    .f1-stat { border:1px solid rgba(255,255,255,.09); border-radius:13px; background:linear-gradient(180deg, rgba(255,255,255,.06), rgba(255,255,255,.02)); padding:.8rem; min-height:5.4rem; }
+    .f1-stat-title { text-transform:uppercase; font-size:.73rem; letter-spacing:.5px; color:rgba(255,255,255,.68); font-weight:800; }
+    .f1-stat-main { font-size:1.3rem; font-weight:950; margin-top:.35rem; }
+    .f1-bar { height:.82rem; border-radius:999px; background:rgba(255,255,255,.08); overflow:hidden; min-width:7rem; display:flex; }
+    .f1-bar-fill { height:100%; border-radius:999px; }
+    @media (max-width:760px) {
+      .f1-card { padding:.75rem; border-radius:16px; }
+      .f1-card-title { font-size:.95rem; }
+      .f1-table { font-size:.82rem; }
+      .f1-table th { font-size:.66rem; padding:.48rem .42rem; }
+      .f1-table td { padding:.50rem .42rem; }
+      .f1-drivercell { min-width:6.6rem; gap:.45rem; }
+      .f1-rank { width:2.1rem; height:2.1rem; }
+      .f1-grid-5, .f1-grid-3 { grid-template-columns:repeat(2, minmax(0, 1fr)); }
     }
 
-    .f1-hero {border:1px solid rgba(255,255,255,.10); border-radius:16px; padding:14px 14px 10px 14px; background:linear-gradient(135deg, rgba(20,30,42,.98), rgba(7,11,18,.98)); margin-bottom:14px; box-shadow:0 8px 28px rgba(0,0,0,.24);} 
-    .f1-brand {display:flex; align-items:center; gap:12px; font-weight:800; font-size:clamp(1.15rem, 5.3vw, 2rem); letter-spacing:.2px;}
-    .f1-logo {color:#ff1e1e; font-style:italic; font-weight:900; font-size:1.25em;}
-    .f1-subtitle {color:rgba(255,255,255,.62); margin-top:7px; font-size:clamp(.84rem, 3.5vw, 1rem);} 
-    .f1-card {border:1px solid rgba(255,255,255,.10); border-radius:14px; padding:12px; background:linear-gradient(180deg, rgba(25,32,42,.94), rgba(10,14,21,.94)); margin:10px 0; box-shadow:0 5px 18px rgba(0,0,0,.18);} 
-    .f1-card-title {font-weight:760; margin-bottom:9px; font-size:1.02rem;}
-    .f1-table {width:100%; border-collapse:collapse; font-size:.86rem; overflow:hidden; border-radius:12px;}
-    .f1-table th {background:rgba(255,255,255,.08); padding:8px 6px; color:rgba(255,255,255,.78); font-weight:650; text-align:left;}
-    .f1-table td {padding:8px 6px; border-top:1px solid rgba(255,255,255,.08); vertical-align:middle;}
-    .f1-drivercell {display:flex; gap:8px; align-items:center; min-width:92px;}
-    .f1-rank {width:4px; min-height:40px; border-radius:3px; display:inline-block;}
-    .f1-small {font-size:.72rem; color:rgba(255,255,255,.65);}
-    .f1-team {font-size:.78rem; font-weight:650;}
-    .f1-delta-pos {color:#ff5555; font-weight:700;}
-    .f1-delta-neg {color:#32d083; font-weight:700;}
-    .f1-chip {display:inline-flex; align-items:center; justify-content:center; min-width:23px; height:23px; padding:0 6px; border-radius:999px; border:1px solid rgba(255,255,255,.18); font-weight:800; font-size:.72rem;}
-    .f1-chip-soft {color:#ff4d5a; border-color:#ff4d5a;}
-    .f1-chip-medium {color:#ffd21f; border-color:#ffd21f;}
-    .f1-chip-hard {color:#f0f0f0; border-color:#f0f0f0;}
-    .f1-chip-intermediate {color:#43d47c; border-color:#43d47c;}
-    .f1-chip-wet {color:#4aa3ff; border-color:#4aa3ff;}
-    .f1-kpi-grid {display:grid; grid-template-columns:repeat(5,minmax(110px,1fr)); gap:10px;}
-    .f1-kpi {border:1px solid rgba(255,255,255,.10); border-radius:12px; padding:10px; background:rgba(255,255,255,.035);} 
-    .f1-kpi b {display:block; font-size:.82rem; margin-bottom:5px;}
     @media (max-width: 760px) {
-        .f1-table {font-size:.78rem;}
-        .f1-table th, .f1-table td {padding:7px 5px;}
-        .f1-hide-mobile {display:none;}
-        .f1-kpi-grid {grid-template-columns:repeat(2,minmax(0,1fr));}
-        .stTabs [data-baseweb="tab"] {font-size:.78rem; padding-left:.35rem; padding-right:.35rem;}
+        .block-container { padding-left:.42rem; padding-right:.42rem; }
+        .stTabs [data-baseweb="tab"] { font-size:.76rem; padding:.47rem .5rem; }
+        div[data-testid="column"] { width:100% !important; flex:1 1 100% !important; }
+        div[data-testid="stHorizontalBlock"] { gap:.35rem; }
+        div[data-testid="stPlotlyChart"] { margin-bottom:.25rem; }
     }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+
+def render_html(markup: str):
+    """Render trusted app-generated HTML without exposing it as code."""
+    try:
+        st.html(markup)
+    except Exception:
+        st.markdown(markup, unsafe_allow_html=True)
+
 
 SESSION_TYPES = {
     "Practice 1": "FP1",
@@ -113,6 +173,18 @@ SESSION_NAME_COLUMNS = ["Session1", "Session2", "Session3", "Session4", "Session
 
 CHANNELS = ["Speed", "Throttle", "Brake", "nGear", "RPM", "DRS", "Accel_ms2"]
 DEFAULT_CHANNELS = ["Speed", "Throttle", "Brake", "nGear"]
+
+
+DRIVER_TEAM_FALLBACK = {
+    "VER":"Red Bull Racing", "TSU":"Red Bull Racing", "PER":"Red Bull Racing",
+    "RUS":"Mercedes", "ANT":"Mercedes", "HAM":"Ferrari", "LEC":"Ferrari",
+    "NOR":"McLaren", "PIA":"McLaren",
+    "ALO":"Aston Martin", "STR":"Aston Martin",
+    "GAS":"Alpine", "COL":"Alpine", "OCO":"Haas F1 Team", "BEA":"Haas F1 Team",
+    "ALB":"Williams", "SAI":"Williams", "SAR":"Williams",
+    "HAD":"RB", "LAW":"RB", "RIC":"RB",
+    "HUL":"Kick Sauber", "BOR":"Kick Sauber", "BOT":"Kick Sauber", "ZHO":"Kick Sauber",
+}
 
 FALLBACK_TEAM_COLORS = {
     "Red Bull Racing": "#3671C6",
@@ -430,51 +502,107 @@ def adjust_color(hex_color: str, factor: float) -> str:
     return rgb_to_hex((r + (255 - r) * (factor - 1), g + (255 - g) * (factor - 1), b + (255 - b) * (factor - 1)))
 
 
-def get_driver_team(session, drv: str) -> str:
-    """Return the team name for a 3-letter driver abbreviation.
-
-    FastF1 versions differ: session.get_driver() is not consistently keyed by
-    abbreviation, so session.results is the most reliable source after load().
-    """
+def _driver_info_row(session, drv: str) -> dict:
+    """Find FastF1 driver metadata robustly across FastF1 versions."""
+    d = str(drv).upper()
     try:
         results = getattr(session, "results", None)
         if results is not None and not results.empty:
-            for key in ["Abbreviation", "BroadcastName", "DriverNumber"]:
+            # Try direct columns first.
+            for key in ["Abbreviation", "BroadcastName", "Tla", "DriverId", "FullName"]:
                 if key in results.columns:
-                    row = results[results[key].astype(str).str.upper() == str(drv).upper()]
+                    mask = results[key].astype(str).str.upper().str.contains(d, regex=False)
+                    row = results[mask]
                     if not row.empty:
-                        for team_col in ["TeamName", "Team", "ConstructorName"]:
-                            if team_col in row.columns and pd.notna(row.iloc[0].get(team_col)):
-                                team = str(row.iloc[0].get(team_col)).strip()
-                                if team and team.lower() != "nan":
-                                    return team
+                        return row.iloc[0].to_dict()
+            # Try index, sometimes results are indexed by driver number or abbreviation.
+            try:
+                idx = results.index.astype(str).str.upper()
+                row = results[idx == d]
+                if not row.empty:
+                    return row.iloc[0].to_dict()
+            except Exception:
+                pass
     except Exception:
         pass
+
     try:
-        info = session.get_driver(drv)
-        for team_col in ["TeamName", "Team", "ConstructorName"]:
-            value = info.get(team_col) if hasattr(info, "get") else None
-            if value is not None and pd.notna(value):
-                return str(value)
+        for ident in getattr(session, "drivers", []):
+            info = session.get_driver(ident)
+            if hasattr(info, "to_dict"):
+                info = info.to_dict()
+            if not isinstance(info, dict):
+                continue
+            vals = [str(info.get(k, "")).upper() for k in ["Abbreviation", "BroadcastName", "Tla", "FullName", "LastName"]]
+            if d in vals or any(v.endswith(d) for v in vals):
+                return info
     except Exception:
         pass
+    return {}
+
+
+def get_driver_team(session, drv: str) -> str:
+    info = _driver_info_row(session, drv)
+    for team_col in ["TeamName", "Team", "ConstructorName", "TeamId"]:
+        value = info.get(team_col)
+        if value is not None and pd.notna(value):
+            team = str(value).strip()
+            if team and team.lower() != "nan":
+                # Normalise a few public-data variations for FastF1 colours.
+                aliases = {
+                    "Red Bull": "Red Bull Racing",
+                    "Racing Bulls": "RB",
+                    "Visa Cash App RB": "RB",
+                    "Kick Sauber": "Kick Sauber",
+                }
+                return aliases.get(team, team)
+    fallback = DRIVER_TEAM_FALLBACK.get(str(drv).upper())
+    if fallback:
+        return fallback
     return "Unknown"
 
 
 def get_driver_last_name(session, drv: str) -> str:
-    try:
-        results = getattr(session, "results", None)
-        if results is not None and not results.empty and "Abbreviation" in results.columns:
-            row = results[results["Abbreviation"].astype(str).str.upper() == str(drv).upper()]
-            if not row.empty:
-                for col in ["LastName", "LastName", "FullName"]:
-                    if col in row.columns and pd.notna(row.iloc[0].get(col)):
-                        val = str(row.iloc[0].get(col)).strip()
-                        if val:
-                            return val.split()[-1]
-    except Exception:
-        pass
-    return drv
+    info = _driver_info_row(session, drv)
+    for col in ["LastName", "BroadcastName", "FullName", "DriverId"]:
+        val = info.get(col)
+        if val is not None and pd.notna(val):
+            text = str(val).strip()
+            if text:
+                return text.split()[-1].title()
+    return str(drv)
+
+
+def get_driver_full_name(session, drv: str) -> str:
+    info = _driver_info_row(session, drv)
+    for col in ["FullName", "BroadcastName", "DriverId"]:
+        val = info.get(col)
+        if val is not None and pd.notna(val):
+            text = str(val).strip()
+            if text:
+                return text.title()
+    return str(drv)
+
+
+TEAM_BADGES = {
+    "Red Bull Racing": "RB",
+    "Mercedes": "★",
+    "Ferrari": "SF",
+    "McLaren": "▸",
+    "Aston Martin": "AM",
+    "Alpine": "A",
+    "Williams": "W",
+    "RB": "VC",
+    "Kick Sauber": "KS",
+    "Sauber": "KS",
+    "Haas F1 Team": "H",
+    "Haas": "H",
+    "Unknown": "?",
+}
+
+
+def team_badge(team: str) -> str:
+    return TEAM_BADGES.get(team, team[:2].upper() if team else "?")
 
 
 def get_team_base_color(session, team: str) -> str:
@@ -739,12 +867,12 @@ def export_csv(lap_tels: Dict[str, pd.DataFrame], labels: Dict[str, str], deltas
 # ------------------------------------------------------------
 # UI
 # ------------------------------------------------------------
-st.markdown("""
+render_html("""
 <div class="f1-hero">
   <div class="f1-brand"><span class="f1-logo">F1</span><span>Telemetry Viewer</span></div>
   <div class="f1-subtitle">FastF1 engineering dashboard: multi-driver telemetry, reference deltas, corner exits, track dominance, tyres, stints and exports.</div>
 </div>
-""", unsafe_allow_html=True)
+""")
 
 st.markdown('<div class="f1-card"><div class="f1-card-title">Session selection</div>', unsafe_allow_html=True)
 current_year = pd.Timestamp.today().year
@@ -888,37 +1016,38 @@ for rank, (drv, lap) in enumerate(selected_laps.items(), start=1):
     chip_class = f"f1-chip-{comp.lower()}" if comp else ""
     tyre_life = lap.get("TyreLife")
     tyre_txt = "" if pd.isna(tyre_life) else f"<span class='f1-small'> {int(tyre_life)} laps</span>"
-    rows_html.append(f"""
-    <tr>
-      <td><div class='f1-drivercell'><span class='f1-rank' style='background:{colour}'></span><div><b>{html.escape(str(drv))}</b><div class='f1-small'>{name_safe}</div></div></div></td>
-      <td><span class='f1-team' style='color:{colour}'>{team_safe}</span></td>
-      <td>{int(lap['LapNumber'])}</td>
-      <td><b>{fmt_laptime(lap['LapTime'])}</b><br><span class='{delta_class}'>{delta}</span></td>
-      <td>{fmt_laptime(lap.get('Sector1Time'))}</td>
-      <td>{fmt_laptime(lap.get('Sector2Time'))}</td>
-      <td>{fmt_laptime(lap.get('Sector3Time'))}</td>
-      <td><span class='f1-chip {chip_class}'>{html.escape(comp[:1] or '—')}</span>{tyre_txt}</td>
-    </tr>
-    """)
+    badge = html.escape(team_badge(team))
+    rows_html.append(
+        f"<tr>"
+        f"<td><div class='f1-drivercell'><span class='f1-rank' style='background:{colour}'>{rank}</span><div><b>{html.escape(str(drv))}</b><div class='f1-small'>{name_safe}</div></div></div></td>"
+        f"<td><span class='f1-team' style='color:{colour}'><span class='f1-team-badge'>{badge}</span>{team_safe}</span></td>"
+        f"<td>{int(lap['LapNumber'])}</td>"
+        f"<td><b>{fmt_laptime(lap['LapTime'])}</b><br><span class='{delta_class}'>{delta}</span></td>"
+        f"<td>{fmt_laptime(lap.get('Sector1Time')).replace('0:', '')}</td>"
+        f"<td>{fmt_laptime(lap.get('Sector2Time')).replace('0:', '')}</td>"
+        f"<td>{fmt_laptime(lap.get('Sector3Time')).replace('0:', '')}</td>"
+        f"<td><span class='f1-chip {chip_class}'>{html.escape(comp[:1] or '—')}</span>{tyre_txt}</td>"
+        f"</tr>"
+    )
 summary_html = """
 <div class='f1-card'>
-  <div class='f1-card-title'>Selected laps <span class='f1-small'>(reference: {ref})</span></div>
+  <div class='f1-card-title'>Selected laps <span class='f1-small'>(reference: {ref})</span><span class='f1-pill'>{count}/5</span></div>
   <div style='overflow-x:auto'>
   <table class='f1-table'>
-    <thead><tr><th>Driver</th><th>Team</th><th>Lap</th><th>Lap time</th><th>S1</th><th>S2</th><th>S3</th><th>Tyre</th></tr></thead>
+    <thead><tr><th>Pos</th><th>Team</th><th>Lap</th><th>Lap time</th><th>S1</th><th>S2</th><th>S3</th><th>Tyre</th></tr></thead>
     <tbody>{rows}</tbody>
   </table>
   </div>
 </div>
-""".format(ref=html.escape(reference_driver), rows="".join(rows_html))
-st.markdown(summary_html, unsafe_allow_html=True)
+""".format(ref=html.escape(reference_driver), count=len(selected_laps), rows="".join(rows_html))
+render_html(summary_html)
 
 # Tabs
 tabs = st.tabs([
-    "Timing",
-    "Telemetry overlays",
-    "Delta to reference",
-    "Corner exits / straights",
+    "Overview",
+    "Telemetry",
+    "Delta",
+    "Corner exits",
     "Track maps",
     "Tyres & stints",
     "Exports",
@@ -1032,6 +1161,31 @@ with tabs[5]:
     if all_laps.empty:
         st.info("No lap data available.")
     else:
+        # Visual tyre summary cards, closer to an F1 timing-screen style than a raw dataframe.
+        compound_palette = {
+            "SOFT": ("S", "#ff3241", "C3/C4/C5 Soft"),
+            "MEDIUM": ("M", "#ffd21f", "C2/C3 Medium"),
+            "HARD": ("H", "#d7d7d7", "C1/C2 Hard"),
+            "INTERMEDIATE": ("I", "#18d65b", "Intermediate"),
+            "WET": ("W", "#38a6ff", "Wet"),
+        }
+        total_laps_for_tyre = max(1, len(all_laps))
+        compound_counts = all_laps.get("Compound", pd.Series(dtype=object)).fillna("UNKNOWN").astype(str).str.upper().value_counts()
+        card_parts = []
+        for compound in ["HARD", "MEDIUM", "SOFT", "INTERMEDIATE", "WET"]:
+            count = int(compound_counts.get(compound, 0))
+            pct = round(100 * count / total_laps_for_tyre)
+            letter, color, label = compound_palette[compound]
+            card_parts.append(
+                f"<div class='f1-stat'>"
+                f"<div class='f1-chip f1-chip-{compound.lower()}' style='border-color:{color}; color:{color};'>{letter}</div>"
+                f"<div class='f1-stat-title' style='color:{color}'>{label}</div>"
+                f"<div class='f1-stat-main'>{pct}%</div>"
+                f"<div class='f1-small'>{count} timed laps</div>"
+                f"</div>"
+            )
+        render_html("<div class='f1-card'><div class='f1-card-title'>Tyre information</div><div class='f1-grid f1-grid-5'>" + "".join(card_parts) + "</div></div>")
+
         tyre_cols = [c for c in ["Driver", "LapNumber", "Stint", "Compound", "TyreLife", "TyreAgeBand", "TyreStatus", "FreshTyre", "LapTime", "LapTimeSeconds", "IsAccurate"] if c in all_laps.columns]
         st.markdown("#### Tyre information by lap")
         tyre_table = format_lap_table(all_laps[tyre_cols]).sort_values(["Driver", "LapNumber"])
