@@ -1,20 +1,6 @@
 # F1 Engineering Telemetry Viewer
 
-A Streamlit + FastF1 telemetry dashboard designed for engineering-style lap comparison.
-
-## Features
-
-- Compare up to 5 drivers
-- Reference-driver delta traces
-- Team-colour plotting with darker reference / lighter comparison shades
-- Speed, throttle, brake, gear, RPM, DRS and estimated acceleration overlays
-- Corner minimum speed comparison
-- Corner exit and straight acceleration analysis
-- Track map coloured by selected telemetry channels
-- Speed dominance map versus the reference driver
-- Lap-time evolution and full lap table
-- Race pace, stint and tyre-life plots
-- CSV export for selected telemetry, delta traces and analysis tables
+Streamlit + FastF1 telemetry dashboard for mobile and desktop.
 
 ## Run locally
 
@@ -23,13 +9,22 @@ pip install -r requirements.txt
 streamlit run app.py
 ```
 
-## Deploy on Streamlit Cloud
+## Streamlit Cloud
 
-1. Upload `app.py`, `requirements.txt` and this `README.md` to your GitHub repo.
-2. Go to Streamlit Community Cloud.
-3. Create a new app using `app.py` as the main file.
-4. Streamlit will install the dependencies from `requirements.txt`.
+Upload/replace these files in your GitHub repo:
 
-## Notes
+- `app.py`
+- `requirements.txt`
+- `README.md`
 
-FastF1 public telemetry is very useful for comparative analysis, but it is not the same as raw team telemetry. Acceleration is estimated from speed/time and should be treated as comparative rather than sensor-grade.
+Then commit. Streamlit Cloud redeploys automatically.
+
+## v4 additions
+
+- iPhone/mobile-first layout tweaks
+- two-colour speed dominance map: faster driver at each track point
+- tyre status, tyre life and tyre age bands
+- practice stint statistics for long-run vs short/quali-style run identification
+- improved mobile plot heights and reduced padding
+
+Notes: FastF1 public telemetry is timing-feed based. Acceleration is derived from speed/time and stint/run-type classification is heuristic because public data does not expose fuel load or team run plan.

@@ -25,6 +25,45 @@ CACHE_DIR = Path("./fastf1_cache")
 CACHE_DIR.mkdir(exist_ok=True)
 fastf1.Cache.enable_cache(str(CACHE_DIR))
 
+st.markdown(
+    """
+    <style>
+    /* Mobile-first Streamlit layout: reduce wasted space and keep controls usable on iPhone Pro Max. */
+    .block-container {
+        padding-top: 0.8rem;
+        padding-left: 0.65rem;
+        padding-right: 0.65rem;
+        padding-bottom: 1.5rem;
+        max-width: 1500px;
+    }
+    h1 { font-size: clamp(1.35rem, 5vw, 2.35rem) !important; line-height: 1.15; }
+    h2 { font-size: clamp(1.15rem, 4vw, 1.75rem) !important; }
+    h3 { font-size: clamp(1.0rem, 3.6vw, 1.35rem) !important; }
+    div[data-testid="stMetricValue"] { font-size: clamp(1.0rem, 4vw, 1.5rem); }
+    div[data-testid="stDataFrame"] { font-size: 0.78rem; }
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 0.2rem;
+        overflow-x: auto;
+        flex-wrap: nowrap;
+    }
+    .stTabs [data-baseweb="tab"] {
+        padding-left: 0.45rem;
+        padding-right: 0.45rem;
+        min-width: max-content;
+        font-size: 0.86rem;
+    }
+    section[data-testid="stSidebar"] { min-width: 18rem; }
+    @media (max-width: 760px) {
+        .block-container { padding-left: 0.45rem; padding-right: 0.45rem; }
+        div[data-testid="column"] { width: 100% !important; flex: 1 1 100% !important; }
+        div[data-testid="stHorizontalBlock"] { gap: 0.25rem; }
+        div[data-testid="stPlotlyChart"] { margin-bottom: 0.35rem; }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
 SESSION_TYPES = {
     "Practice 1": "FP1",
     "Practice 2": "FP2",
@@ -169,6 +208,92 @@ def add_sector_seconds(laps: pd.DataFrame) -> pd.DataFrame:
         if col in out.columns:
             out[col.replace("Time", "Seconds")] = out[col].dt.total_seconds().round(3)
     return out
+
+
+def classify_fresh_tyre(value) -> str:
+    if pd.isna(value):
+        return "Unknown"
+    if isinstance(value, (bool, np.bool_)):
+        return "Fresh" if bool(value) else "Used"
+    text = str(value).strip().lower()
+    if text in {"true", "1", "yes", "fresh", "new"}:
+        return "Fresh"
+    if text in {"false", "0", "no", "used", "old"}:
+        return "Used"
+    return str(value)
+
+
+def add_tyre_columns(laps: pd.DataFrame) -> pd.DataFrame:
+    out = laps.copy()
+    if "FreshTyre" in out.columns:
+        out["TyreStatus"] = out["FreshTyre"].apply(classify_fresh_tyre)
+    else:
+        # Fallback: tyre life 1 is usually a fresh-set first timed lap; higher values mean used/aged.
+        out["TyreStatus"] = np.where(pd.to_numeric(out.get("TyreLife", pd.Series(index=out.index)), errors="coerce") <= 1, "Likely fresh", "Used/aged")
+    if "TyreLife" in out.columns:
+        tl = pd.to_numeric(out["TyreLife"], errors="coerce")
+        out["TyreAgeBand"] = pd.cut(tl, bins=[-np.inf, 2, 6, 12, np.inf], labels=["New 0-2", "Low 3-6", "Medium 7-12", "High 13+"])
+    return out
+
+
+def classify_run_type(lap_count: int, median_lap: float, best_lap: float, session_best: float, compound: str) -> str:
+    # Heuristic only: public FastF1 does not expose fuel load or run plan.
+    if lap_count >= 5:
+        return "Long run / race-pace candidate"
+    if lap_count <= 3 and np.isfinite(best_lap) and np.isfinite(session_best) and best_lap <= session_best + 1.8:
+        return "Quali/low-fuel candidate"
+    if lap_count <= 4:
+        return "Short run"
+    return "Mixed run"
+
+
+def build_stint_statistics(laps: pd.DataFrame) -> pd.DataFrame:
+    if laps.empty or "Stint" not in laps.columns:
+        return pd.DataFrame()
+    work = add_tyre_columns(laps.copy())
+    work = work[work["LapTime"].notna()].copy()
+    if work.empty:
+        return pd.DataFrame()
+    work["LapTimeSeconds"] = work["LapTime"].dt.total_seconds()
+    # Remove obvious in/out laps from pace statistics where columns are available.
+    clean = work.copy()
+    if "PitInTime" in clean.columns:
+        clean = clean[clean["PitInTime"].isna()]
+    if "PitOutTime" in clean.columns:
+        clean = clean[clean["PitOutTime"].isna()]
+    if "IsAccurate" in clean.columns:
+        clean = clean[clean["IsAccurate"].fillna(True).astype(bool)]
+    session_best = float(clean["LapTimeSeconds"].min()) if not clean.empty else np.nan
+    group_cols = ["Driver", "Stint"]
+    rows = []
+    for (drv, stint), g_all in work.groupby(group_cols):
+        g_clean = clean[(clean["Driver"] == drv) & (clean["Stint"] == stint)]
+        g_stats = g_clean if not g_clean.empty else g_all
+        compound = str(g_all["Compound"].dropna().iloc[0]) if "Compound" in g_all.columns and not g_all["Compound"].dropna().empty else "Unknown"
+        tyre_status = str(g_all["TyreStatus"].dropna().iloc[0]) if "TyreStatus" in g_all.columns and not g_all["TyreStatus"].dropna().empty else "Unknown"
+        tyre_life_start = pd.to_numeric(g_all.get("TyreLife", pd.Series(dtype=float)), errors="coerce").min()
+        tyre_life_end = pd.to_numeric(g_all.get("TyreLife", pd.Series(dtype=float)), errors="coerce").max()
+        lap_count = int(g_stats["LapTimeSeconds"].notna().sum())
+        best = float(g_stats["LapTimeSeconds"].min()) if lap_count else np.nan
+        median = float(g_stats["LapTimeSeconds"].median()) if lap_count else np.nan
+        mean = float(g_stats["LapTimeSeconds"].mean()) if lap_count else np.nan
+        std = float(g_stats["LapTimeSeconds"].std()) if lap_count > 1 else 0.0
+        rows.append({
+            "Driver": drv,
+            "Stint": int(stint) if pd.notna(stint) else stint,
+            "RunType": classify_run_type(lap_count, median, best, session_best, compound),
+            "Compound": compound,
+            "TyreStatus": tyre_status,
+            "TyreLifeStart": tyre_life_start,
+            "TyreLifeEnd": tyre_life_end,
+            "TimedLapsUsed": lap_count,
+            "BestLap_s": best,
+            "MedianLap_s": median,
+            "MeanLap_s": mean,
+            "StdDev_s": std,
+            "LapRange": f"{int(g_all['LapNumber'].min())}-{int(g_all['LapNumber'].max())}" if "LapNumber" in g_all.columns else "",
+        })
+    return pd.DataFrame(rows).sort_values(["RunType", "Driver", "Stint"])
 
 
 def get_driver_laps(session, drv: str) -> pd.DataFrame:
@@ -470,28 +595,61 @@ def plot_track_map(pos: pd.DataFrame, metric: str, title: str) -> Optional[go.Fi
     fig.update_traces(marker=dict(size=4))
     fig.update_yaxes(scaleanchor="x", scaleratio=1, visible=False)
     fig.update_xaxes(visible=False)
-    fig.update_layout(height=560, margin=dict(l=10, r=10, t=40, b=10), coloraxis_colorbar_title=color)
+    fig.update_layout(height=460, margin=dict(l=5, r=5, t=35, b=5), coloraxis_colorbar_title=color)
     return fig
 
 
-def plot_dominance_map(ref_pos: pd.DataFrame, cmp_tel: pd.DataFrame, cmp_driver: str, ref_driver: str) -> Optional[go.Figure]:
-    if ref_pos.empty or cmp_tel.empty or not {"X", "Y", "Distance", "Speed"}.issubset(ref_pos.columns) or "Speed" not in cmp_tel.columns:
+def plot_dominance_map(ref_pos: pd.DataFrame, cmp_tel: pd.DataFrame, cmp_driver: str, ref_driver: str, styles: Optional[Dict[str, Dict[str, str]]] = None) -> Optional[go.Figure]:
+    """Two-colour track dominance: each point is coloured by which driver has higher speed there."""
+    required_ref = {"X", "Y", "Distance", "Speed"}
+    if ref_pos.empty or cmp_tel.empty or not required_ref.issubset(ref_pos.columns) or "Speed" not in cmp_tel.columns:
         return None
     cmp_clean = clean_for_interp(cmp_tel, ["Speed"])
-    ref_clean = ref_pos.dropna(subset=["Distance", "Speed", "X", "Y"]).sort_values("Distance")
+    ref_clean = ref_pos.dropna(subset=["Distance", "Speed", "X", "Y"]).sort_values("Distance").drop_duplicates("Distance")
+    if cmp_clean.empty or ref_clean.empty:
+        return None
     max_dist = min(ref_clean["Distance"].max(), cmp_clean["Distance"].max())
     ref_clean = ref_clean[ref_clean["Distance"] <= max_dist].copy()
-    ref_clean["SpeedDelta_kph"] = np.interp(ref_clean["Distance"], cmp_clean["Distance"], cmp_clean["Speed"]) - ref_clean["Speed"]
-    fig = px.scatter(ref_clean, x="X", y="Y", color="SpeedDelta_kph", color_continuous_scale="RdBu", color_continuous_midpoint=0,
-                     hover_data=["Distance", "Speed", "SpeedDelta_kph"], title=f"Speed dominance map: {cmp_driver} - {ref_driver}")
-    fig.update_traces(marker=dict(size=4))
+    if ref_clean.empty:
+        return None
+    cmp_speed = np.interp(ref_clean["Distance"], cmp_clean["Distance"], cmp_clean["Speed"])
+    ref_clean["ReferenceSpeed_kph"] = ref_clean["Speed"]
+    ref_clean["CompareSpeed_kph"] = cmp_speed
+    ref_clean["SpeedDelta_kph"] = ref_clean["CompareSpeed_kph"] - ref_clean["ReferenceSpeed_kph"]
+    ref_clean["FasterDriver"] = np.where(ref_clean["SpeedDelta_kph"] > 0, cmp_driver, ref_driver)
+    color_map = {ref_driver: "#00D1FF", cmp_driver: "#FF4B4B"}
+    if styles:
+        color_map = {ref_driver: styles.get(ref_driver, {}).get("color", color_map[ref_driver]), cmp_driver: styles.get(cmp_driver, {}).get("color", color_map[cmp_driver])}
+    fig = px.scatter(
+        ref_clean,
+        x="X",
+        y="Y",
+        color="FasterDriver",
+        color_discrete_map=color_map,
+        hover_data={
+            "Distance": ":.1f",
+            "ReferenceSpeed_kph": ":.1f",
+            "CompareSpeed_kph": ":.1f",
+            "SpeedDelta_kph": ":+.1f",
+            "X": False,
+            "Y": False,
+        },
+        title=f"Speed dominance: faster car at each track point",
+    )
+    fig.update_traces(marker=dict(size=4.5))
     fig.update_yaxes(scaleanchor="x", scaleratio=1, visible=False)
     fig.update_xaxes(visible=False)
-    fig.update_layout(height=560, margin=dict(l=10, r=10, t=40, b=10), coloraxis_colorbar_title="Δ speed [km/h]")
+    fig.update_layout(
+        height=460,
+        margin=dict(l=5, r=5, t=35, b=5),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
     return fig
 
 
-def export_csv(lap_tels: Dict[str, pd.DataFrame], labels: Dict[str, str], deltas: List[pd.DataFrame], corner_table: pd.DataFrame, exit_table: pd.DataFrame) -> bytes:
+
+
+def export_csv(lap_tels: Dict[str, pd.DataFrame], labels: Dict[str, str], deltas: List[pd.DataFrame], corner_table: pd.DataFrame, exit_table: pd.DataFrame, stint_table: Optional[pd.DataFrame] = None) -> bytes:
     sections = []
     for drv, tel in lap_tels.items():
         t = tel.copy()
@@ -504,6 +662,8 @@ def export_csv(lap_tels: Dict[str, pd.DataFrame], labels: Dict[str, str], deltas
         sections.append("# Corner minimum speed table\n" + corner_table.to_csv(index=False))
     if not exit_table.empty:
         sections.append("# Corner exit / straight acceleration table\n" + exit_table.to_csv(index=False))
+    if stint_table is not None and not stint_table.empty:
+        sections.append("# Tyre and stint statistics\n" + stint_table.to_csv(index=False))
     return ("\n".join(sections)).encode("utf-8")
 
 
@@ -599,10 +759,13 @@ with st.spinner("Preparing telemetry traces and analysis tables."):
     corner_table = corner_min_speed_table(lap_tels, reference_driver)
     exit_table = exit_segment_comparison(lap_tels, reference_driver)
     ref_exit_segments = detect_corner_exit_segments(ref_tel)
+    stint_export_laps = session.laps.copy()
+    stint_export_laps = stint_export_laps[stint_export_laps["LapTime"].notna() & stint_export_laps["Driver"].isin(selected_laps.keys())].copy()
+    stint_export = build_stint_statistics(stint_export_laps)
 
 # Summary cards
 st.subheader("Selected laps")
-summary_cols = ["Driver", "Team", "Lap", "Lap time", "S1", "S2", "S3", "Compound", "TyreLife", "Stint", "Colour role"]
+summary_cols = ["Driver", "Team", "Lap", "Lap time", "S1", "S2", "S3", "Compound", "TyreLife", "TyreStatus", "FreshTyre", "Stint", "Colour role"]
 summary_rows = []
 for drv, lap in selected_laps.items():
     summary_rows.append({
@@ -615,6 +778,8 @@ for drv, lap in selected_laps.items():
         "S3": fmt_laptime(lap.get("Sector3Time")),
         "Compound": lap.get("Compound"),
         "TyreLife": lap.get("TyreLife"),
+        "TyreStatus": classify_fresh_tyre(lap.get("FreshTyre")) if "FreshTyre" in lap.index else ("Likely fresh" if pd.to_numeric(pd.Series([lap.get("TyreLife")]), errors="coerce").iloc[0] <= 1 else "Used/aged"),
+        "FreshTyre": lap.get("FreshTyre") if "FreshTyre" in lap.index else None,
         "Stint": lap.get("Stint"),
         "Colour role": styles[drv]["role"],
     })
@@ -640,7 +805,7 @@ with tabs[0]:
     all_laps = session.laps.copy()
     all_laps = all_laps[all_laps["LapTime"].notna()].copy()
     all_laps = all_laps[all_laps["Driver"].isin(selected_laps.keys())]
-    all_laps = add_sector_seconds(all_laps)
+    all_laps = add_tyre_columns(add_sector_seconds(all_laps))
     all_laps["LapTimeSeconds"] = all_laps["LapTime"].dt.total_seconds().round(3)
     fig = go.Figure()
     for drv in selected_laps.keys():
@@ -653,7 +818,7 @@ with tabs[0]:
     table_cols = [
         "Driver", "LapNumber", "LapTime", "LapTimeSeconds",
         "Sector1Time", "Sector1Seconds", "Sector2Time", "Sector2Seconds", "Sector3Time", "Sector3Seconds",
-        "Compound", "TyreLife", "Stint", "PitInTime", "PitOutTime", "IsAccurate"
+        "Compound", "TyreLife", "TyreStatus", "FreshTyre", "Stint", "PitInTime", "PitOutTime", "IsAccurate"
     ]
     show_cols = [c for c in table_cols if c in all_laps.columns]
     full_table = format_lap_table(all_laps[show_cols]).sort_values(["LapTimeSeconds", "Driver"])
@@ -728,27 +893,73 @@ with tabs[4]:
         st.info("Select at least two drivers for a dominance map.")
     else:
         cmp_driver = st.selectbox("Compare driver", cmp_options, index=0)
-        fig = plot_dominance_map(lap_pos[reference_driver], lap_tels[cmp_driver], cmp_driver, reference_driver)
+        fig = plot_dominance_map(lap_pos[reference_driver], lap_tels[cmp_driver], cmp_driver, reference_driver, styles)
         if fig is None:
             st.warning("Could not create dominance map for this comparison.")
         else:
             st.plotly_chart(fig, use_container_width=True)
 
 with tabs[5]:
-    st.markdown("### Race pace / stint view")
+    st.markdown("### Tyres and stint analysis")
     all_laps = session.laps.copy()
     all_laps = all_laps[all_laps["LapTime"].notna() & all_laps["Driver"].isin(selected_laps.keys())].copy()
+    all_laps = add_tyre_columns(all_laps)
     all_laps["LapTimeSeconds"] = all_laps["LapTime"].dt.total_seconds()
     if all_laps.empty:
         st.info("No lap data available.")
     else:
-        fig = px.box(all_laps, x="Driver", y="LapTimeSeconds", color="Compound" if "Compound" in all_laps.columns else "Driver", points="all")
-        fig.update_layout(height=430, margin=dict(l=20, r=20, t=35, b=25), yaxis_title="Lap time [s]")
+        tyre_cols = [c for c in ["Driver", "LapNumber", "Stint", "Compound", "TyreLife", "TyreAgeBand", "TyreStatus", "FreshTyre", "LapTime", "LapTimeSeconds", "IsAccurate"] if c in all_laps.columns]
+        st.markdown("#### Tyre information by lap")
+        tyre_table = format_lap_table(all_laps[tyre_cols]).sort_values(["Driver", "LapNumber"])
+        st.dataframe(tyre_table, use_container_width=True, hide_index=True)
+
+        st.markdown("#### Stint statistics")
+        stint_stats = build_stint_statistics(all_laps)
+        if stint_stats.empty:
+            st.info("Stint statistics are not available for this session.")
+        else:
+            st.dataframe(stint_stats.round(3), use_container_width=True, hide_index=True)
+            st.caption("Run type is a heuristic from stint length and lap time relative to the session best. Public data does not include fuel load or actual run plan.")
+
+        st.markdown("#### Pace spread")
+        fig = px.box(
+            all_laps,
+            x="Driver",
+            y="LapTimeSeconds",
+            color="Compound" if "Compound" in all_laps.columns else "Driver",
+            points="all",
+            hover_data=[c for c in ["LapNumber", "Stint", "TyreLife", "TyreStatus"] if c in all_laps.columns],
+        )
+        fig.update_layout(height=390, margin=dict(l=10, r=10, t=30, b=20), yaxis_title="Lap time [s]")
         st.plotly_chart(fig, use_container_width=True)
 
         if "TyreLife" in all_laps.columns:
-            fig = px.scatter(all_laps, x="TyreLife", y="LapTimeSeconds", color="Driver", symbol="Compound" if "Compound" in all_laps.columns else None, trendline=None, color_discrete_map={d: styles[d]["color"] for d in styles})
-            fig.update_layout(height=430, margin=dict(l=20, r=20, t=35, b=25), xaxis_title="Tyre life [laps]", yaxis_title="Lap time [s]")
+            st.markdown("#### Tyre age vs lap time")
+            fig = px.scatter(
+                all_laps,
+                x="TyreLife",
+                y="LapTimeSeconds",
+                color="Driver",
+                symbol="Compound" if "Compound" in all_laps.columns else None,
+                hover_data=[c for c in ["LapNumber", "Stint", "TyreStatus", "TyreAgeBand"] if c in all_laps.columns],
+                color_discrete_map={d: styles[d]["color"] for d in styles},
+            )
+            fig.update_layout(height=390, margin=dict(l=10, r=10, t=30, b=20), xaxis_title="Tyre life [laps]", yaxis_title="Lap time [s]")
+            st.plotly_chart(fig, use_container_width=True)
+
+        if session_code in {"FP1", "FP2", "FP3"} and not build_stint_statistics(all_laps).empty:
+            st.markdown("#### Practice run-type summary")
+            stats = build_stint_statistics(all_laps)
+            fig = px.scatter(
+                stats,
+                x="TimedLapsUsed",
+                y="MedianLap_s",
+                color="RunType",
+                symbol="Compound",
+                hover_data=["Driver", "Stint", "TyreStatus", "TyreLifeStart", "TyreLifeEnd", "BestLap_s"],
+                size="TimedLapsUsed",
+            )
+            fig.update_layout(height=390, margin=dict(l=10, r=10, t=30, b=20), xaxis_title="Timed laps in stint", yaxis_title="Median lap [s]")
             st.plotly_chart(fig, use_container_width=True)
 
 with tabs[6]:
@@ -756,7 +967,7 @@ with tabs[6]:
     file_base = f"telemetry_{year}_{event_name}_{session_code}_{'_'.join(selected_laps.keys())}".replace(" ", "_").replace("/", "-")
     st.download_button(
         "Download telemetry, deltas and analysis CSV",
-        data=export_csv(lap_tels, labels, deltas, corner_table, exit_table),
+        data=export_csv(lap_tels, labels, deltas, corner_table, exit_table, stint_export),
         file_name=f"{file_base}.csv",
         mime="text/csv",
     )
