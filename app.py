@@ -906,12 +906,18 @@ def plot_shift_map_compare(
     driver_2: Optional[str],
     labels: Dict[str, str],
 ) -> go.Figure:
-    """RPM-vs-speed shift map with inferred linear ratio lines per gear.
+    """Clean WOT-only RPM-vs-speed shift map with robust inferred gear lines.
 
-    Uses only FastF1 public telemetry channels: Speed, RPM and nGear.
-    The slope of each trend line is a ratio proxy. First driver uses circle
-    markers and solid trend lines. Second driver uses diamond markers and
-    dashed trend lines. Colours are discrete by gear, not by driver.
+    FastF1 public telemetry does not provide true gear ratios. This plot infers a
+    ratio proxy from the near-linear relationship between RPM and speed inside
+    each gear, using only full-throttle samples to avoid lift/coast/braking noise.
+
+    Noise reduction used here:
+      - throttle >= 99% only
+      - brake == false where available
+      - stable gear samples only, excluding immediate shift transitions
+      - speed-binned median RPM before fitting
+      - robust residual filter before the final linear trend
     """
     fig = go.Figure()
     gear_colors = {
@@ -922,101 +928,175 @@ def plot_shift_map_compare(
         5: "#64d2ff",
         6: "#0a84ff",
         7: "#bf5af2",
-        8: "#8e8e93",
+        8: "#b8bcc2",
     }
 
     def _prep(driver: str) -> pd.DataFrame:
         tel = lap_tels.get(driver, pd.DataFrame())
-        if tel.empty or not {"Speed", "RPM", "nGear"}.issubset(tel.columns):
+        required = {"Speed", "RPM", "nGear", "Throttle"}
+        if tel.empty or not required.issubset(tel.columns):
             return pd.DataFrame()
-        cols = ["Speed", "RPM", "nGear"] + (["Distance"] if "Distance" in tel.columns else [])
+
+        cols = ["Speed", "RPM", "nGear", "Throttle"]
+        if "Brake" in tel.columns:
+            cols.append("Brake")
+        if "Distance" in tel.columns:
+            cols.append("Distance")
         df = tel[cols].dropna().copy()
-        df = df[(df["Speed"] > 20) & (df["RPM"] > 3000)]
         if df.empty:
             return df
+
         df["Gear"] = df["nGear"].round().astype(int)
         df = df[df["Gear"].between(1, 8)]
+        df = df[(df["Speed"] > 35) & (df["RPM"] > 5500) & (df["Throttle"] >= 99)]
+
+        if "Brake" in df.columns:
+            # FastF1 Brake is usually boolean. This also handles 0/1 numeric.
+            df = df[~df["Brake"].astype(bool)]
+
+        # Remove points immediately around shifts. Gear must be stable for the
+        # previous and next sample. This removes most clutch/shift transients.
+        gear = df["Gear"]
+        stable = gear.eq(gear.shift(1)) & gear.eq(gear.shift(-1))
+        df = df[stable].copy()
         return df
 
-    driver_specs = [(driver_1, "circle", "solid", 0.82)]
+    def _binned_clean(g: pd.DataFrame) -> Tuple[pd.DataFrame, Optional[Tuple[float, float, np.ndarray, np.ndarray]]]:
+        """Return filtered scatter samples and robust line coefficients."""
+        if len(g) < 10:
+            return pd.DataFrame(), None
+
+        g = g.sort_values("Speed").copy()
+        # Bin every 2 km/h and use medians to suppress wheel-slip/GPS/RPM noise.
+        g["SpeedBin"] = (g["Speed"] / 2.0).round() * 2.0
+        b = g.groupby("SpeedBin", as_index=False).agg(
+            Speed=("Speed", "median"),
+            RPM=("RPM", "median"),
+            Count=("RPM", "size"),
+        )
+        b = b[b["Count"] >= 2]
+        if len(b) < 4:
+            # Low-sample gears such as G1 may have sparse bins. Fall back to raw.
+            b = g[["Speed", "RPM"]].copy()
+        if len(b) < 4 or b["Speed"].max() - b["Speed"].min() < 10:
+            return pd.DataFrame(), None
+
+        # First fit on binned medians.
+        x0 = b["Speed"].to_numpy(dtype=float)
+        y0 = b["RPM"].to_numpy(dtype=float)
+        slope0, intercept0 = np.polyfit(x0, y0, 1)
+        resid = y0 - (slope0 * x0 + intercept0)
+        med = np.nanmedian(resid)
+        mad = np.nanmedian(np.abs(resid - med))
+        sigma = 1.4826 * mad if mad > 1e-6 else np.nanstd(resid)
+        if not np.isfinite(sigma) or sigma < 80:
+            sigma = 180.0
+        keep_bins = np.abs(resid - med) <= max(2.5 * sigma, 250.0)
+        b2 = b[keep_bins].copy()
+        if len(b2) < 4:
+            b2 = b.copy()
+
+        x = b2["Speed"].to_numpy(dtype=float)
+        y = b2["RPM"].to_numpy(dtype=float)
+        slope, intercept = np.polyfit(x, y, 1)
+
+        # Apply the same robust envelope to raw scatter points so the cloud is
+        # readable but still reflects the measured samples.
+        raw_resid = g["RPM"].to_numpy(dtype=float) - (slope * g["Speed"].to_numpy(dtype=float) + intercept)
+        raw_med = np.nanmedian(raw_resid)
+        raw_mad = np.nanmedian(np.abs(raw_resid - raw_med))
+        raw_sigma = 1.4826 * raw_mad if raw_mad > 1e-6 else np.nanstd(raw_resid)
+        if not np.isfinite(raw_sigma) or raw_sigma < 100:
+            raw_sigma = 220.0
+        g_clean = g[np.abs(raw_resid - raw_med) <= max(2.8 * raw_sigma, 350.0)].copy()
+
+        # Cap point count per gear/driver for mobile readability.
+        if len(g_clean) > 90:
+            g_clean = g_clean.iloc[:: max(1, len(g_clean)//90)].copy()
+
+        x_line = np.linspace(np.nanpercentile(x, 3), np.nanpercentile(x, 97), 32)
+        y_line = slope * x_line + intercept
+        return g_clean, (float(slope), float(intercept), x_line, y_line)
+
+    driver_specs = [(driver_1, "circle", "solid", 0.74, "Driver 1")]
     if driver_2 and driver_2 != driver_1:
-        driver_specs.append((driver_2, "diamond", "dash", 0.72))
+        driver_specs.append((driver_2, "diamond", "dash", 0.58, "Driver 2"))
+
+    # Dummy legend entries make driver style obvious without repeating every gear.
+    for idx, (driver, symbol, dash, opacity, driver_text) in enumerate(driver_specs):
+        dlabel = labels.get(driver, driver)
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None], mode="markers+lines",
+            name=f"{dlabel}: {'dots/solid' if idx == 0 else 'diamonds/dashed'}",
+            marker=dict(symbol=symbol, size=8, color="rgba(245,247,251,0.85)"),
+            line=dict(color="rgba(245,247,251,0.85)", width=1.3, dash=dash),
+            showlegend=True,
+        ))
 
     legend_seen = set()
-    trend_seen = set()
-    for driver, marker_symbol, dash_style, opacity in driver_specs:
+    for driver, marker_symbol, dash_style, opacity, driver_text in driver_specs:
         df = _prep(driver)
         if df.empty:
             continue
         dlabel = labels.get(driver, driver)
         for gear in range(1, 9):
             g = df[df["Gear"] == gear].copy()
-            if len(g) < 8:
+            g_clean, trend = _binned_clean(g)
+            if g_clean.empty or trend is None:
                 continue
-            # Limit trace size for mobile/browser responsiveness while preserving distribution.
-            if len(g) > 180:
-                g_plot = g.iloc[:: max(1, len(g)//180)].copy()
-            else:
-                g_plot = g
+            slope, intercept, x_line, y_line = trend
             show_gear_legend = gear not in legend_seen
             legend_seen.add(gear)
-            hover_cols = ["Distance"] if "Distance" in g_plot.columns else []
+            hover_cols = ["Distance"] if "Distance" in g_clean.columns else []
+
             fig.add_trace(go.Scatter(
-                x=g_plot["Speed"],
-                y=g_plot["RPM"],
+                x=g_clean["Speed"],
+                y=g_clean["RPM"],
                 mode="markers",
                 name=f"G{gear}" if show_gear_legend else f"G{gear} {dlabel}",
                 legendgroup=f"G{gear}",
                 showlegend=show_gear_legend,
                 marker=dict(
                     color=gear_colors[gear],
-                    size=6 if marker_symbol == "circle" else 7,
+                    size=4.8 if marker_symbol == "circle" else 5.6,
                     symbol=marker_symbol,
                     opacity=opacity,
-                    line=dict(width=0.4, color="rgba(255,255,255,0.35)"),
+                    line=dict(width=0.25, color="rgba(255,255,255,0.28)"),
                 ),
-                customdata=g_plot[hover_cols] if hover_cols else None,
+                customdata=g_clean[hover_cols] if hover_cols else None,
                 hovertemplate=(
-                    f"<b>{dlabel}</b><br>Gear {gear}<br>Speed=%{{x:.1f}} km/h<br>RPM=%{{y:.0f}}"
+                    f"<b>{dlabel}</b><br>Gear {gear}<br>WOT filtered<br>Speed=%{{x:.1f}} km/h<br>RPM=%{{y:.0f}}"
                     + ("<br>Distance=%{customdata[0]:.0f} m" if hover_cols else "")
                     + "<extra></extra>"
                 ),
             ))
 
-            # Linear inferred gear-ratio trend. RPM should be near-linear with speed inside each gear.
-            x = g["Speed"].to_numpy(dtype=float)
-            y = g["RPM"].to_numpy(dtype=float)
-            if len(np.unique(np.round(x, 1))) < 3:
-                continue
-            slope, intercept = np.polyfit(x, y, 1)
-            x_line = np.linspace(np.nanpercentile(x, 5), np.nanpercentile(x, 95), 40)
-            y_line = slope * x_line + intercept
-            key = (driver, gear)
-            if key not in trend_seen:
-                trend_seen.add(key)
-                fig.add_trace(go.Scatter(
-                    x=x_line,
-                    y=y_line,
-                    mode="lines",
-                    name=f"{dlabel} G{gear} trend",
-                    legendgroup=f"trend-{driver}",
-                    showlegend=False,
-                    line=dict(color=gear_colors[gear], width=2.5, dash=dash_style),
-                    hovertemplate=f"<b>{dlabel}</b><br>Gear {gear} trend<br>RPM = {slope:.1f} × Speed + {intercept:.0f}<extra></extra>",
-                ))
+            fig.add_trace(go.Scatter(
+                x=x_line,
+                y=y_line,
+                mode="lines",
+                name=f"{dlabel} G{gear} trend",
+                legendgroup=f"trend-{driver}",
+                showlegend=False,
+                line=dict(color=gear_colors[gear], width=1.35, dash=dash_style),
+                opacity=0.95 if dash_style == "solid" else 0.75,
+                hovertemplate=f"<b>{dlabel}</b><br>Gear {gear} WOT trend<br>RPM = {slope:.1f} × Speed + {intercept:.0f}<extra></extra>",
+            ))
 
     fig.update_layout(
-        height=470,
-        margin=dict(l=20, r=20, t=35, b=35),
+        height=500,
+        margin=dict(l=20, r=20, t=55, b=35),
         xaxis_title="Speed [km/h]",
         yaxis_title="RPM",
-        legend=dict(orientation="h", y=1.10, x=0),
+        legend=dict(orientation="h", y=1.16, x=0, font=dict(size=11), itemsizing="constant"),
         hovermode="closest",
     )
+    fig.update_xaxes(showgrid=True, gridcolor="rgba(255,255,255,0.12)")
+    fig.update_yaxes(showgrid=True, gridcolor="rgba(255,255,255,0.12)")
     fig.add_annotation(
-        xref="paper", yref="paper", x=0, y=1.03, showarrow=False, align="left",
-        text="● first driver / solid trends &nbsp;&nbsp; ◆ second driver / dashed trends",
-        font=dict(size=12, color="rgba(245,247,251,0.72)"),
+        xref="paper", yref="paper", x=0, y=1.05, showarrow=False, align="left",
+        text="Filtered to throttle ≥99%, brake off, stable gear samples. Lines use speed-binned median RPM with outlier rejection.",
+        font=dict(size=11, color="rgba(245,247,251,0.66)"),
     )
     return fig
 
