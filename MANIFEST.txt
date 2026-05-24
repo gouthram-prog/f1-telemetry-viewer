@@ -1,0 +1,11 @@
+F1 Telemetry Viewer v13 release
+
+Files:
+- app.py
+- requirements.txt
+- README.md
+- .streamlit/config.toml
+
+Validation:
+- app.py compiled with python -m py_compile
+- .streamlit/config.toml included in ZIP
