@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import html
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
@@ -58,6 +59,38 @@ st.markdown(
         div[data-testid="column"] { width: 100% !important; flex: 1 1 100% !important; }
         div[data-testid="stHorizontalBlock"] { gap: 0.25rem; }
         div[data-testid="stPlotlyChart"] { margin-bottom: 0.35rem; }
+    }
+
+    .f1-hero {border:1px solid rgba(255,255,255,.10); border-radius:16px; padding:14px 14px 10px 14px; background:linear-gradient(135deg, rgba(20,30,42,.98), rgba(7,11,18,.98)); margin-bottom:14px; box-shadow:0 8px 28px rgba(0,0,0,.24);} 
+    .f1-brand {display:flex; align-items:center; gap:12px; font-weight:800; font-size:clamp(1.15rem, 5.3vw, 2rem); letter-spacing:.2px;}
+    .f1-logo {color:#ff1e1e; font-style:italic; font-weight:900; font-size:1.25em;}
+    .f1-subtitle {color:rgba(255,255,255,.62); margin-top:7px; font-size:clamp(.84rem, 3.5vw, 1rem);} 
+    .f1-card {border:1px solid rgba(255,255,255,.10); border-radius:14px; padding:12px; background:linear-gradient(180deg, rgba(25,32,42,.94), rgba(10,14,21,.94)); margin:10px 0; box-shadow:0 5px 18px rgba(0,0,0,.18);} 
+    .f1-card-title {font-weight:760; margin-bottom:9px; font-size:1.02rem;}
+    .f1-table {width:100%; border-collapse:collapse; font-size:.86rem; overflow:hidden; border-radius:12px;}
+    .f1-table th {background:rgba(255,255,255,.08); padding:8px 6px; color:rgba(255,255,255,.78); font-weight:650; text-align:left;}
+    .f1-table td {padding:8px 6px; border-top:1px solid rgba(255,255,255,.08); vertical-align:middle;}
+    .f1-drivercell {display:flex; gap:8px; align-items:center; min-width:92px;}
+    .f1-rank {width:4px; min-height:40px; border-radius:3px; display:inline-block;}
+    .f1-small {font-size:.72rem; color:rgba(255,255,255,.65);}
+    .f1-team {font-size:.78rem; font-weight:650;}
+    .f1-delta-pos {color:#ff5555; font-weight:700;}
+    .f1-delta-neg {color:#32d083; font-weight:700;}
+    .f1-chip {display:inline-flex; align-items:center; justify-content:center; min-width:23px; height:23px; padding:0 6px; border-radius:999px; border:1px solid rgba(255,255,255,.18); font-weight:800; font-size:.72rem;}
+    .f1-chip-soft {color:#ff4d5a; border-color:#ff4d5a;}
+    .f1-chip-medium {color:#ffd21f; border-color:#ffd21f;}
+    .f1-chip-hard {color:#f0f0f0; border-color:#f0f0f0;}
+    .f1-chip-intermediate {color:#43d47c; border-color:#43d47c;}
+    .f1-chip-wet {color:#4aa3ff; border-color:#4aa3ff;}
+    .f1-kpi-grid {display:grid; grid-template-columns:repeat(5,minmax(110px,1fr)); gap:10px;}
+    .f1-kpi {border:1px solid rgba(255,255,255,.10); border-radius:12px; padding:10px; background:rgba(255,255,255,.035);} 
+    .f1-kpi b {display:block; font-size:.82rem; margin-bottom:5px;}
+    @media (max-width: 760px) {
+        .f1-table {font-size:.78rem;}
+        .f1-table th, .f1-table td {padding:7px 5px;}
+        .f1-hide-mobile {display:none;}
+        .f1-kpi-grid {grid-template-columns:repeat(2,minmax(0,1fr));}
+        .stTabs [data-baseweb="tab"] {font-size:.78rem; padding-left:.35rem; padding-right:.35rem;}
     }
     </style>
     """,
@@ -398,14 +431,50 @@ def adjust_color(hex_color: str, factor: float) -> str:
 
 
 def get_driver_team(session, drv: str) -> str:
+    """Return the team name for a 3-letter driver abbreviation.
+
+    FastF1 versions differ: session.get_driver() is not consistently keyed by
+    abbreviation, so session.results is the most reliable source after load().
+    """
+    try:
+        results = getattr(session, "results", None)
+        if results is not None and not results.empty:
+            for key in ["Abbreviation", "BroadcastName", "DriverNumber"]:
+                if key in results.columns:
+                    row = results[results[key].astype(str).str.upper() == str(drv).upper()]
+                    if not row.empty:
+                        for team_col in ["TeamName", "Team", "ConstructorName"]:
+                            if team_col in row.columns and pd.notna(row.iloc[0].get(team_col)):
+                                team = str(row.iloc[0].get(team_col)).strip()
+                                if team and team.lower() != "nan":
+                                    return team
+    except Exception:
+        pass
     try:
         info = session.get_driver(drv)
-        return str(info.get("TeamName") or info.get("Team") or "Unknown")
+        for team_col in ["TeamName", "Team", "ConstructorName"]:
+            value = info.get(team_col) if hasattr(info, "get") else None
+            if value is not None and pd.notna(value):
+                return str(value)
     except Exception:
-        row = session.results[session.results["Abbreviation"] == drv]
-        if not row.empty and "TeamName" in row.columns:
-            return str(row.iloc[0]["TeamName"])
+        pass
     return "Unknown"
+
+
+def get_driver_last_name(session, drv: str) -> str:
+    try:
+        results = getattr(session, "results", None)
+        if results is not None and not results.empty and "Abbreviation" in results.columns:
+            row = results[results["Abbreviation"].astype(str).str.upper() == str(drv).upper()]
+            if not row.empty:
+                for col in ["LastName", "LastName", "FullName"]:
+                    if col in row.columns and pd.notna(row.iloc[0].get(col)):
+                        val = str(row.iloc[0].get(col)).strip()
+                        if val:
+                            return val.split()[-1]
+    except Exception:
+        pass
+    return drv
 
 
 def get_team_base_color(session, team: str) -> str:
@@ -670,36 +739,47 @@ def export_csv(lap_tels: Dict[str, pd.DataFrame], labels: Dict[str, str], deltas
 # ------------------------------------------------------------
 # UI
 # ------------------------------------------------------------
-st.title("F1 Engineering Telemetry Viewer")
-st.caption("FastF1-powered multi-driver telemetry, reference deltas, corner-exit acceleration, track maps, tyre/stint analysis and exports.")
+st.markdown("""
+<div class="f1-hero">
+  <div class="f1-brand"><span class="f1-logo">F1</span><span>Telemetry Viewer</span></div>
+  <div class="f1-subtitle">FastF1 engineering dashboard: multi-driver telemetry, reference deltas, corner exits, track dominance, tyres, stints and exports.</div>
+</div>
+""", unsafe_allow_html=True)
 
-with st.sidebar:
-    st.header("Session")
-    current_year = pd.Timestamp.today().year
+st.markdown('<div class="f1-card"><div class="f1-card-title">Session selection</div>', unsafe_allow_html=True)
+current_year = pd.Timestamp.today().year
+c1, c2, c3 = st.columns([0.85, 1.6, 1.1])
+with c1:
     year = st.number_input("Year", min_value=2018, max_value=current_year, value=min(current_year, 2025), step=1)
 
-    try:
-        schedule = get_schedule(int(year))
-    except Exception as e:
-        st.error(f"Could not load schedule: {e}")
-        st.stop()
+try:
+    schedule = get_schedule(int(year))
+except Exception as e:
+    st.error(f"Could not load schedule: {e}")
+    st.stop()
 
-    events = available_events(schedule)
-    if not events:
-        st.warning("No completed sessions with public FastF1 data are available for this year yet.")
-        st.stop()
+events = available_events(schedule)
+if not events:
+    st.warning("No completed sessions with public FastF1 data are available for this year yet.")
+    st.stop()
 
+with c2:
     event_name = st.selectbox("Grand Prix", events, index=max(0, len(events) - 1))
-    available_session_labels = available_sessions_for_event(schedule, event_name)
-    if not available_session_labels:
-        st.warning("No available sessions found for this Grand Prix yet.")
-        st.stop()
+available_session_labels = available_sessions_for_event(schedule, event_name)
+if not available_session_labels:
+    st.warning("No available sessions found for this Grand Prix yet.")
+    st.stop()
 
-    default_session = "Race" if "Race" in available_session_labels else available_session_labels[-1]
+default_session = "Race" if "Race" in available_session_labels else available_session_labels[-1]
+with c3:
     session_label = st.selectbox("Session", available_session_labels, index=available_session_labels.index(default_session))
-    session_code = session_code_from_label(session_label)
-    st.caption(f"Showing only sessions whose scheduled start time has passed. Available here: {', '.join(available_session_labels)}")
-    load_btn = st.button("Load session", type="primary")
+session_code = session_code_from_label(session_label)
+info_col, btn_col = st.columns([2.6, .9])
+with info_col:
+    st.caption(f"Data: FastF1. Available sessions for this GP: {', '.join(available_session_labels)}")
+with btn_col:
+    load_btn = st.button("Load / refresh", type="primary", use_container_width=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
 if "loaded_key" not in st.session_state:
     st.session_state.loaded_key = None
@@ -722,28 +802,37 @@ if not drivers:
     st.warning("No driver lap data found for this session.")
     st.stop()
 
-st.sidebar.header("Drivers and laps")
+st.markdown('<div class="f1-card"><div class="f1-card-title">Drivers and lap selection</div>', unsafe_allow_html=True)
 default_drivers = drivers[: min(5, len(drivers))]
-selected_drivers = st.sidebar.multiselect("Compare up to 5 drivers", drivers, default=default_drivers, max_selections=5)
+selected_drivers = st.multiselect("Compare up to 5 drivers", drivers, default=default_drivers, max_selections=5)
 if not selected_drivers:
     st.warning("Select at least one driver.")
     st.stop()
-reference_driver = st.sidebar.selectbox("Reference driver for deltas", selected_drivers, index=0)
-selection_mode = st.sidebar.radio("Lap selection", ["Fastest valid lap", "Choose lap per driver"], index=0)
+d1, d2 = st.columns([1, 1])
+with d1:
+    reference_driver = st.selectbox("Reference driver for deltas", selected_drivers, index=0)
+with d2:
+    selection_mode = st.radio("Lap selection", ["Fastest valid lap", "Choose lap per driver"], index=0, horizontal=True)
 
 selected_laps = {}
 labels = {}
-for drv in selected_drivers:
+if selection_mode == "Choose lap per driver":
+    lap_cols = st.columns(min(len(selected_drivers), 5))
+else:
+    lap_cols = []
+for i, drv in enumerate(selected_drivers):
     laps = get_driver_laps(session, drv)
     lap_number = None
     if selection_mode == "Choose lap per driver":
         nums = laps["LapNumber"].astype(int).tolist()
         if nums:
-            lap_number = st.sidebar.selectbox(f"{drv} lap", nums, index=0, key=f"lap_{drv}")
+            with lap_cols[i % len(lap_cols)]:
+                lap_number = st.selectbox(f"{drv} lap", nums, index=0, key=f"lap_{drv}")
     lap = select_lap(laps, selection_mode, lap_number)
     if lap is not None:
         selected_laps[drv] = lap
         labels[drv] = f"{drv} L{int(lap['LapNumber'])} ({fmt_laptime(lap['LapTime'])})"
+st.markdown('</div>', unsafe_allow_html=True)
 
 if reference_driver not in selected_laps:
     st.warning("Reference driver does not have a valid selected lap.")
@@ -783,11 +872,46 @@ for drv, lap in selected_laps.items():
         "Stint": lap.get("Stint"),
         "Colour role": styles[drv]["role"],
     })
-st.dataframe(pd.DataFrame(summary_rows, columns=summary_cols), use_container_width=True, hide_index=True)
-
-legend_cols = st.columns(min(len(selected_laps), 5))
-for col, drv in zip(legend_cols, selected_laps.keys()):
-    col.markdown(f"<div style='border-left: 14px solid {styles[drv]['color']}; padding-left: 8px'><b>{drv}</b><br>{styles[drv]['team']}</div>", unsafe_allow_html=True)
+summary_df = pd.DataFrame(summary_rows, columns=summary_cols)
+# A compact HTML summary is much more usable than a dataframe on iPhone.
+ref_time = seconds(selected_laps[reference_driver]["LapTime"])
+rows_html = []
+for rank, (drv, lap) in enumerate(selected_laps.items(), start=1):
+    colour = styles[drv]["color"]
+    team = styles[drv]["team"]
+    team_safe = html.escape(str(team))
+    name_safe = html.escape(str(get_driver_last_name(session, drv)))
+    lt = seconds(lap["LapTime"])
+    delta = "REF" if drv == reference_driver or ref_time is None or lt is None else f"{lt - ref_time:+.3f}"
+    delta_class = "" if delta == "REF" else ("f1-delta-neg" if str(delta).startswith("-") else "f1-delta-pos")
+    comp = str(lap.get("Compound") or "").upper()
+    chip_class = f"f1-chip-{comp.lower()}" if comp else ""
+    tyre_life = lap.get("TyreLife")
+    tyre_txt = "" if pd.isna(tyre_life) else f"<span class='f1-small'> {int(tyre_life)} laps</span>"
+    rows_html.append(f"""
+    <tr>
+      <td><div class='f1-drivercell'><span class='f1-rank' style='background:{colour}'></span><div><b>{html.escape(str(drv))}</b><div class='f1-small'>{name_safe}</div></div></div></td>
+      <td><span class='f1-team' style='color:{colour}'>{team_safe}</span></td>
+      <td>{int(lap['LapNumber'])}</td>
+      <td><b>{fmt_laptime(lap['LapTime'])}</b><br><span class='{delta_class}'>{delta}</span></td>
+      <td>{fmt_laptime(lap.get('Sector1Time'))}</td>
+      <td>{fmt_laptime(lap.get('Sector2Time'))}</td>
+      <td>{fmt_laptime(lap.get('Sector3Time'))}</td>
+      <td><span class='f1-chip {chip_class}'>{html.escape(comp[:1] or '—')}</span>{tyre_txt}</td>
+    </tr>
+    """)
+summary_html = """
+<div class='f1-card'>
+  <div class='f1-card-title'>Selected laps <span class='f1-small'>(reference: {ref})</span></div>
+  <div style='overflow-x:auto'>
+  <table class='f1-table'>
+    <thead><tr><th>Driver</th><th>Team</th><th>Lap</th><th>Lap time</th><th>S1</th><th>S2</th><th>S3</th><th>Tyre</th></tr></thead>
+    <tbody>{rows}</tbody>
+  </table>
+  </div>
+</div>
+""".format(ref=html.escape(reference_driver), rows="".join(rows_html))
+st.markdown(summary_html, unsafe_allow_html=True)
 
 # Tabs
 tabs = st.tabs([
