@@ -1,40 +1,23 @@
-# F1 Telemetry Command Centre v13
+# F1 Engineering Telemetry Viewer v14
 
-A mobile-first FastF1 Streamlit dashboard for engineering-style F1 lap analysis.
+Streamlit + FastF1 telemetry viewer.
 
-## What is retained from v12
+v14 keeps the v13/v12 historical-analysis workflow and adds an f1-dash-inspired overview UI:
 
-- Available-year/event/session filtering
-- Up to 5-driver comparison
-- Reference-driver delta plots
-- Multi-channel telemetry overlays
-- Plot Lab with selectable X/Y channels
-- Corner minimum speed tables
-- Corner-exit / straight acceleration analysis
-- Track maps and speed-dominance maps
-- Tyre information and stint/run-type statistics
-- Power unit proxy tab: tractive force, wheel power, gear ratio and shift map plots
-- Export of telemetry, deltas and analysis tables
+- timing-wall style driver rows
+- gap to reference driver
+- sector chips
+- tyre compound rings
+- selected-lap command centre
+- retained telemetry, plot lab, delta, corner-exit, track-map, tyre/stint, PU and export tabs
 
-## v13 improvements
+## Run locally
 
-- Polished mobile-first dark UI
-- Sticky command header
-- KPI ribbon: fastest selected lap, reference driver, top speed, stint laps analysed
-- Driver badge strip with team colours and tyre chips
-- Improved Plotly styling globally across all charts
-- More readable chart containers, legends, hover labels and mobile spacing
-- Retains the v12 single-file structure for easier GitHub mobile upload
+```bash
+pip install -r requirements.txt
+streamlit run app.py
+```
 
 ## Deploy
 
-Upload/replace these files in your GitHub repo:
-
-```text
-app.py
-requirements.txt
-README.md
-.streamlit/config.toml
-```
-
-Then commit. Streamlit Cloud should redeploy automatically.
+Upload all files including `.streamlit/config.toml` to GitHub and deploy through Streamlit Community Cloud.

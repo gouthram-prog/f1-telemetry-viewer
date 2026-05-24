@@ -190,6 +190,41 @@ st.markdown(
       .f1-driver-badge { min-width:5.2rem; }
     }
 
+
+    /* v14 f1-dash inspired timing wall and information graphics */
+    .fdash-board { display:grid; grid-template-columns: 1.05fr .95fr; gap:.75rem; align-items:start; }
+    .fdash-panel { border:1px solid rgba(255,255,255,.12); border-radius:18px; background:linear-gradient(145deg, rgba(14,22,35,.96), rgba(5,8,14,.98)); box-shadow:0 14px 36px rgba(0,0,0,.32); overflow:hidden; }
+    .fdash-panel-head { display:flex; align-items:center; justify-content:space-between; gap:.5rem; padding:.78rem .85rem; border-bottom:1px solid rgba(255,255,255,.08); background:linear-gradient(90deg, rgba(255,255,255,.08), rgba(255,255,255,.02)); }
+    .fdash-title { font-size:.84rem; font-weight:1000; text-transform:uppercase; letter-spacing:.75px; color:#fff; }
+    .fdash-sub { color:rgba(255,255,255,.58); font-size:.72rem; font-weight:700; }
+    .timing-wall { width:100%; border-collapse:separate; border-spacing:0 .36rem; padding:.5rem; }
+    .timing-wall tr { background:linear-gradient(90deg, rgba(255,255,255,.055), rgba(255,255,255,.025)); }
+    .timing-wall td { padding:.48rem .34rem; white-space:nowrap; border-top:1px solid rgba(255,255,255,.055); border-bottom:1px solid rgba(255,255,255,.055); }
+    .timing-wall td:first-child { border-left:3px solid var(--team,#888); border-radius:11px 0 0 11px; }
+    .timing-wall td:last-child { border-right:1px solid rgba(255,255,255,.055); border-radius:0 11px 11px 0; }
+    .tw-pos { width:1.7rem; height:1.7rem; border-radius:8px; display:inline-flex; align-items:center; justify-content:center; font-weight:1000; color:#fff; background:linear-gradient(145deg, var(--team,#888), rgba(255,255,255,.12)); box-shadow:0 0 18px color-mix(in srgb, var(--team,#888) 35%, transparent); }
+    .tw-driver { font-weight:1000; font-size:1.02rem; letter-spacing:.25px; }
+    .tw-team { color:rgba(255,255,255,.58); font-size:.68rem; margin-top:-.08rem; }
+    .tw-laptime { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight:1000; color:#fff; }
+    .tw-gap { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color:#ff4d5a; font-weight:900; }
+    .tw-gap-ref { color:#c95cff; }
+    .sector-strip { display:flex; gap:.22rem; align-items:center; }
+    .sector-chip { min-width:2.45rem; text-align:center; border-radius:7px; padding:.2rem .26rem; font-family:ui-monospace, SFMono-Regular, Menlo, monospace; font-size:.68rem; font-weight:950; background:rgba(255,255,255,.075); color:#eaf0ff; border:1px solid rgba(255,255,255,.08); }
+    .sector-purple { background:rgba(177,76,255,.30); border-color:rgba(177,76,255,.55); color:#e8c5ff; }
+    .sector-green { background:rgba(39,231,130,.18); border-color:rgba(39,231,130,.45); color:#82ffbd; }
+    .sector-yellow { background:rgba(255,210,31,.15); border-color:rgba(255,210,31,.40); color:#ffe783; }
+    .tyre-dot { width:1.8rem; height:1.8rem; border-radius:999px; display:inline-flex; align-items:center; justify-content:center; font-weight:1000; font-size:.74rem; background:#070b12; border:2px solid #bbb; }
+    .tyre-soft{border-color:#ff3241;color:#ff3241}.tyre-medium{border-color:#ffd21f;color:#ffd21f}.tyre-hard{border-color:#e8e8e8;color:#e8e8e8}.tyre-intermediate{border-color:#20db66;color:#20db66}.tyre-wet{border-color:#3aa7ff;color:#3aa7ff}.tyre-unknown{border-color:#8b95a7;color:#8b95a7}
+    .fdash-statgrid { display:grid; grid-template-columns:repeat(4, minmax(0,1fr)); gap:.55rem; padding:.65rem; }
+    .fdash-mini { border:1px solid rgba(255,255,255,.08); border-radius:14px; background:rgba(255,255,255,.04); padding:.65rem; min-height:4.7rem; }
+    .fdash-mini-k { color:rgba(255,255,255,.60); font-size:.68rem; text-transform:uppercase; letter-spacing:.6px; font-weight:900; }
+    .fdash-mini-v { font-size:1.12rem; font-weight:1000; margin-top:.25rem; }
+    .fdash-mini-s { color:rgba(255,255,255,.52); font-size:.70rem; margin-top:.12rem; }
+    .fdash-legend { display:flex; flex-wrap:wrap; gap:.35rem; padding:.1rem .65rem .65rem; }
+    .legend-pill { border:1px solid rgba(255,255,255,.10); background:rgba(255,255,255,.045); border-radius:999px; padding:.18rem .48rem; font-size:.68rem; color:rgba(255,255,255,.72); font-weight:850; }
+    @media (max-width: 980px) { .fdash-board { grid-template-columns:1fr; } .fdash-statgrid { grid-template-columns:repeat(2, minmax(0,1fr)); } }
+    @media (max-width: 560px) { .timing-wall td { padding:.42rem .24rem; } .sector-chip { min-width:2.02rem; font-size:.60rem; } .tw-team { display:none; } .tw-laptime { font-size:.78rem; } .fdash-panel-head { padding:.65rem; } }
+
     </style>
     """,
     unsafe_allow_html=True,
@@ -1343,6 +1378,114 @@ def build_insight_rows(selected_laps: Dict[str, pd.Series], reference_driver: st
     return insights
 
 
+
+
+def _compound_letter(compound: str) -> str:
+    c = str(compound or "UNKNOWN").upper()
+    return {"SOFT":"S", "MEDIUM":"M", "HARD":"H", "INTERMEDIATE":"I", "WET":"W"}.get(c, "?")
+
+
+def _compound_class(compound: str) -> str:
+    c = str(compound or "UNKNOWN").lower()
+    if c not in {"soft", "medium", "hard", "intermediate", "wet"}:
+        c = "unknown"
+    return f"tyre-{c}"
+
+
+def _sector_class(value: Optional[float], best: Optional[float], driver_best: Optional[float]) -> str:
+    if value is None or not np.isfinite(value):
+        return ""
+    if best is not None and np.isfinite(best) and abs(value - best) < 0.0005:
+        return " sector-purple"
+    if driver_best is not None and np.isfinite(driver_best) and abs(value - driver_best) < 0.0005:
+        return " sector-green"
+    return " sector-yellow"
+
+
+def _fmt_sector(value: Optional[float]) -> str:
+    if value is None or not np.isfinite(value):
+        return "—"
+    return f"{value:.3f}"
+
+
+def render_fdash_timing_wall(selected_laps: Dict[str, pd.Series], styles: Dict[str, Dict[str, str]], reference_driver: str) -> str:
+    if not selected_laps:
+        return "<div class='fdash-panel'><div class='fdash-panel-head'><div class='fdash-title'>Timing wall</div></div></div>"
+    ref_time = seconds(selected_laps[reference_driver]["LapTime"]) if reference_driver in selected_laps else None
+    # session best per sector among selected laps
+    sector_cols = ["Sector1Time", "Sector2Time", "Sector3Time"]
+    selected_sector_best = {}
+    driver_sector_best = {d: {} for d in selected_laps}
+    for col in sector_cols:
+        vals = []
+        for d, lap in selected_laps.items():
+            v = seconds(lap.get(col))
+            if v is not None and np.isfinite(v):
+                vals.append(v)
+                driver_sector_best[d][col] = v
+        selected_sector_best[col] = min(vals) if vals else None
+
+    ordered = sorted(selected_laps.items(), key=lambda kv: seconds(kv[1].get("LapTime")) or 9999.0)
+    rows = []
+    for pos, (drv, lap) in enumerate(ordered, start=1):
+        lap_s = seconds(lap.get("LapTime"))
+        gap = "REF" if drv == reference_driver or ref_time is None or lap_s is None else f"+{lap_s - ref_time:.3f}"
+        gap_class = "tw-gap tw-gap-ref" if drv == reference_driver else "tw-gap"
+        compound = str(lap.get("Compound") or "UNKNOWN").upper()
+        life = lap.get("TyreLife")
+        life_txt = "—" if pd.isna(life) else str(int(life))
+        fresh = classify_fresh_tyre(lap.get("FreshTyre")) if "FreshTyre" in lap.index else "—"
+        sectors = []
+        for i, col in enumerate(sector_cols, start=1):
+            val = seconds(lap.get(col))
+            cls = _sector_class(val, selected_sector_best.get(col), driver_sector_best.get(drv, {}).get(col))
+            sectors.append(f"<span class='sector-chip{cls}'>S{i} {_fmt_sector(val)}</span>")
+        team = styles.get(drv, {}).get("team", "Unknown")
+        color = styles.get(drv, {}).get("color", "#999999")
+        rows.append(
+            f"<tr style='--team:{html.escape(color)}'>"
+            f"<td><span class='tw-pos'>{pos}</span></td>"
+            f"<td><div class='tw-driver'>{html.escape(drv)}</div><div class='tw-team'>{html.escape(team)}</div></td>"
+            f"<td><span class='tyre-dot {_compound_class(compound)}'>{_compound_letter(compound)}</span></td>"
+            f"<td><div class='tw-laptime'>{fmt_laptime(lap.get('LapTime'))}</div><div class='f1-small'>Lap {int(lap.get('LapNumber')) if pd.notna(lap.get('LapNumber')) else '—'}</div></td>"
+            f"<td><span class='{gap_class}'>{html.escape(gap)}</span></td>"
+            f"<td><div class='sector-strip'>{''.join(sectors)}</div></td>"
+            f"<td><div class='f1-small'>Age</div><b>{html.escape(life_txt)}</b></td>"
+            f"<td><div class='f1-small'>Set</div><b>{html.escape(str(fresh))}</b></td>"
+            f"</tr>"
+        )
+    return (
+        "<div class='fdash-panel'><div class='fdash-panel-head'>"
+        "<div><div class='fdash-title'>F1-dash inspired timing wall</div><div class='fdash-sub'>Selected lap comparison · sectors · tyres · gap to reference</div></div>"
+        f"<div class='legend-pill'>Reference: {html.escape(reference_driver)}</div>"
+        "</div><table class='timing-wall'><tbody>" + "".join(rows) + "</tbody></table>"
+        "<div class='fdash-legend'><span class='legend-pill'>Purple = best selected sector</span><span class='legend-pill'>Green = driver personal selected sector</span><span class='legend-pill'>Tyre ring = compound</span></div></div>"
+    )
+
+
+def render_fdash_session_stats(selected_laps: Dict[str, pd.Series], all_laps: pd.DataFrame, reference_driver: str) -> str:
+    if not selected_laps:
+        return ""
+    best_drv = min(selected_laps, key=lambda d: seconds(selected_laps[d].get("LapTime")) or 9999.0)
+    best_lap = selected_laps[best_drv]
+    ref_lap = selected_laps.get(reference_driver)
+    lap_counts = all_laps.groupby("Driver")["LapNumber"].count().to_dict() if not all_laps.empty and "Driver" in all_laps.columns else {}
+    max_speed_txt = "—"
+    if not all_laps.empty and "SpeedST" in all_laps.columns:
+        m = pd.to_numeric(all_laps["SpeedST"], errors="coerce").max()
+        if pd.notna(m):
+            max_speed_txt = f"{m:.0f} km/h"
+    total_laps = int(sum(lap_counts.get(d, 0) for d in selected_laps))
+    cards = [
+        ("Fastest selected", f"{best_drv} · {fmt_laptime(best_lap.get('LapTime'))}", f"Lap {int(best_lap.get('LapNumber')) if pd.notna(best_lap.get('LapNumber')) else '—'}"),
+        ("Reference", reference_driver, fmt_laptime(ref_lap.get('LapTime')) if ref_lap is not None else "—"),
+        ("Timed laps", str(total_laps), "selected drivers"),
+        ("Speed trap", max_speed_txt, "if available in timing feed"),
+    ]
+    return "<div class='fdash-panel'><div class='fdash-panel-head'><div><div class='fdash-title'>Command centre</div><div class='fdash-sub'>Key session context</div></div></div><div class='fdash-statgrid'>" + "".join(
+        f"<div class='fdash-mini'><div class='fdash-mini-k'>{html.escape(k)}</div><div class='fdash-mini-v'>{html.escape(v)}</div><div class='fdash-mini-s'>{html.escape(s)}</div></div>" for k, v, s in cards
+    ) + "</div></div>"
+
 def export_csv(lap_tels: Dict[str, pd.DataFrame], labels: Dict[str, str], deltas: List[pd.DataFrame], corner_table: pd.DataFrame, exit_table: pd.DataFrame, stint_table: Optional[pd.DataFrame] = None) -> bytes:
     sections = []
     for drv, tel in lap_tels.items():
@@ -1368,7 +1511,7 @@ render_html("""
 <div class="f1-topbar">
   <div class="f1-hero">
     <div class="f1-brand"><span class="f1-logo">F1</span><span>Telemetry Command Centre</span></div>
-    <div class="f1-subtitle">FastF1 engineering dashboard: lap deltas, telemetry overlays, tyre/stint intelligence, track dominance, PU proxies and exportable analysis.</div>
+    <div class="f1-subtitle">FastF1 engineering dashboard: f1-dash inspired timing wall, lap deltas, telemetry overlays, tyre/stint intelligence, track dominance, PU proxies and exportable analysis.</div>
   </div>
 </div>
 """)
@@ -1584,20 +1727,38 @@ tabs = st.tabs([
 ])
 
 with tabs[0]:
-    st.markdown("### Lap time evolution")
+    st.markdown("### Session overview")
     all_laps = session.laps.copy()
     all_laps = all_laps[all_laps["LapTime"].notna()].copy()
     all_laps = all_laps[all_laps["Driver"].isin(selected_laps.keys())]
     all_laps = add_tyre_columns(add_sector_seconds(all_laps))
     all_laps["LapTimeSeconds"] = all_laps["LapTime"].dt.total_seconds().round(3)
+
+    render_html(
+        "<div class='fdash-board'>" +
+        render_fdash_timing_wall(selected_laps, styles, reference_driver) +
+        render_fdash_session_stats(selected_laps, all_laps, reference_driver) +
+        "</div>"
+    )
+
+    st.markdown("### Lap time evolution")
     fig = go.Figure()
     for drv in selected_laps.keys():
         d = all_laps[all_laps["Driver"] == drv]
-        fig.add_trace(go.Scatter(x=d["LapNumber"], y=d["LapTimeSeconds"], mode="lines+markers", name=drv, line=dict(color=styles[drv]["color"])))
-    fig.update_layout(height=420, margin=dict(l=20, r=20, t=35, b=25), xaxis_title="Lap", yaxis_title="Lap time [s]", hovermode="x unified")
+        fig.add_trace(go.Scatter(
+            x=d["LapNumber"], y=d["LapTimeSeconds"], mode="lines+markers", name=drv,
+            line=dict(color=styles[drv]["color"], width=2.4),
+            marker=dict(size=6, color=styles[drv]["color"], line=dict(width=1, color="rgba(255,255,255,.35)")),
+            hovertemplate="%{fullData.name}<br>Lap %{x}<br>%{y:.3f}s<extra></extra>",
+        ))
+    fig.update_layout(
+        height=440, margin=dict(l=10, r=10, t=35, b=25),
+        xaxis_title="Lap", yaxis_title="Lap time [s]", hovermode="x unified",
+        title="Lap time trace"
+    )
     st.plotly_chart(fig, use_container_width=True)
 
-    st.markdown("### Full lap table")
+    st.markdown("### Compact lap table")
     table_cols = [
         "Driver", "LapNumber", "LapTime", "LapTimeSeconds",
         "Sector1Time", "Sector1Seconds", "Sector2Time", "Sector2Seconds", "Sector3Time", "Sector3Seconds",
@@ -1606,6 +1767,13 @@ with tabs[0]:
     show_cols = [c for c in table_cols if c in all_laps.columns]
     full_table = format_lap_table(all_laps[show_cols]).sort_values(["LapTimeSeconds", "Driver"])
     st.dataframe(full_table, use_container_width=True, hide_index=True)
+
+    with st.expander("What changed in v14 UI"):
+        st.markdown(
+            "- Timing-wall layout inspired by f1-dash: gaps, sectors, tyre state and driver rows in one glance.\n"
+            "- Existing v13/v12 analysis tabs retained: telemetry, plot lab, deltas, corner exits, track maps, tyres, PU and export.\n"
+            "- More information density without hiding the engineering tools."
+        )
 
 with tabs[1]:
     selected_channels = st.multiselect("Channels", [c for c in CHANNELS if any(c in t.columns for t in lap_tels.values())], default=[c for c in DEFAULT_CHANNELS if any(c in t.columns for t in lap_tels.values())])
