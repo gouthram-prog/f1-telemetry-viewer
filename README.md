@@ -1,28 +1,41 @@
-# F1 Telemetry Studio v11
+# F1 Engineering Telemetry Viewer v12
 
-A mobile-first FastF1 telemetry dashboard built for Streamlit Cloud.
+Mobile-first Streamlit + FastF1 telemetry dashboard.
 
-## Run locally
-
-```bash
-pip install -r requirements.txt
-streamlit run app.py
-```
-
-## Highlights
-
-- completed event/session filtering
-- mobile-first dark UI
-- driver cards, tyre chips and team colours
-- lap heatmap and accurate sector timings
-- flexible telemetry overlay lab
-- reference-driver delta plots
-- speed-based track dominance
-- stint and tyre-life analysis
-- PU-style proxy plots: shift map and acceleration-vs-speed
-- automated insight tables
+## Features retained from v10
+- Filtered year / Grand Prix / session availability
+- Up to 5-driver comparison
+- Accurate lap and sector times
+- Telemetry overlays
+- Delta-to-reference plots
+- Corner minimum speed table
+- Corner-exit acceleration and straight-line summaries
+- Track map and two-driver speed-dominance map
+- Tyre age/fresh-used information
+- Practice stint classification for long-run/quali-style runs
+- Power unit proxy tab: tractive force, power-speed, gear ratios, shift map, ERS-channel detection
 - CSV export
 
-## Note
+## v12 improvements
+- Restored v10 feature set after the failed v11 rebuild
+- Removed risky HTML wrappers around widgets that could show code snippets
+- Added Plot Lab for flexible overlays of channels vs distance/time/lap percent/speed
+- Added automatic Insights tab
+- Included `.streamlit/config.toml` theme file
+- More robust single-file app for easier GitHub upload
 
-Public FastF1 data does not normally include true ERS SOC/harvest/deployment channels. The Power Unit tab therefore uses available public telemetry to derive proxies.
+## Deploy
+Upload these files/folders to GitHub:
+
+```text
+app.py
+requirements.txt
+README.md
+.streamlit/config.toml
+```
+
+Streamlit main file path:
+
+```text
+app.py
+```
